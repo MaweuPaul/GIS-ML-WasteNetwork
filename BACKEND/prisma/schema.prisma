@@ -16,55 +16,59 @@ datasource db {
 model Soil {
   id          Int      @id @default(autoincrement())
   name        String
-  description String?
-  geometry    Json     
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String
+  fileName    String
+  filePath    String
+  fileSize    Int
+  fileType    String
 }
 
 model ProtectedArea {
   id          Int      @id @default(autoincrement())
   name        String
-  description String?
-  area        Float
-  geometry    Json     
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String
+  fileName    String
+  filePath    String
+  fileSize    Int
+  fileType    String
 }
 
 model River {
   id          Int      @id @default(autoincrement())
   name        String
-  length      Float
-  geometry    Json     
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String
+  fileName    String
+  filePath    String
+  fileSize    Int
+  fileType    String
 }
 
 model Road {
   id          Int      @id @default(autoincrement())
   name        String
-  type        String
-  length      Float
-  geometry    Json     
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String
+  fileName    String
+  filePath    String
+  fileSize    Int
+  fileType    String
 }
 
 model DigitalElevationModel {
   id          Int      @id @default(autoincrement())
   name        String
-  resolution  String
-  geometry    Json     
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String
+  fileName    String
+  filePath    String
+  fileSize    Int
+  fileType    String
 }
 
 model Geology {
   id          Int      @id @default(autoincrement())
-  type        String
-  description String?
-  geometry    Json     
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  name        String
+  description String
+  fileName    String
+  filePath    String
+  fileSize    Int
+  fileType    String
 }

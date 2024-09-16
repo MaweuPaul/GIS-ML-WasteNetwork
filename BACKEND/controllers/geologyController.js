@@ -1,6 +1,8 @@
-const prisma = require('../lib/prisma');
+const prisma = require('../Lib/prisma.js');
+const dotenv = require('dotenv');
+dotenv.config();
 
-export const getGeologies = async (req, res) => {
+const getGeologies = async (req, res) => {
   try {
     const geologies = await prisma.geology.findMany();
     res.json(geologies);
@@ -10,7 +12,7 @@ export const getGeologies = async (req, res) => {
   }
 };
 
-export const getGeology = async (req, res) => {
+const getGeology = async (req, res) => {
   const { id } = req.params;
   try {
     const geology = await prisma.geology.findUnique({
@@ -23,7 +25,7 @@ export const getGeology = async (req, res) => {
   }
 };
 
-export const createGeology = async (req, res) => {
+const createGeology = async (req, res) => {
   const { type, description, geometry } = req.body;
   try {
     const newGeology = await prisma.geology.create({
@@ -36,7 +38,7 @@ export const createGeology = async (req, res) => {
   }
 };
 
-export const updateGeology = async (req, res) => {
+const updateGeology = async (req, res) => {
   const { id } = req.params;
   const { type, description, geometry } = req.body;
   try {
@@ -51,7 +53,7 @@ export const updateGeology = async (req, res) => {
   }
 };
 
-export const deleteGeology = async (req, res) => {
+const deleteGeology = async (req, res) => {
   const { id } = req.params;
   try {
     await prisma.geology.delete({ where: { id: Number(id) } });
@@ -60,4 +62,12 @@ export const deleteGeology = async (req, res) => {
     console.error(error);
     res.status(500).json({ message: 'Failed to delete geology' });
   }
+};
+
+module.exports = {
+  getGeologies,
+  getGeology,
+  createGeology,
+  updateGeology,
+  deleteGeology,
 };

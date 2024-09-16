@@ -1,6 +1,11 @@
-const prisma = require('../lib/prisma');
+const prisma = require('../Lib/prisma.js');
+const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
 
-export const getSoils = async (req, res) => {
+dotenv.config();
+
+const getSoils = async (req, res) => {
   try {
     const soils = await prisma.soil.findMany();
     res.json(soils);
@@ -10,7 +15,7 @@ export const getSoils = async (req, res) => {
   }
 };
 
-export const getSoil = async (req, res) => {
+const getSoil = async (req, res) => {
   const { id } = req.params;
   try {
     const soil = await prisma.soil.findUnique({ where: { id: Number(id) } });
@@ -21,20 +26,32 @@ export const getSoil = async (req, res) => {
   }
 };
 
-export const createSoil = async (req, res) => {
-  const { name, description, geometry } = req.body;
+const createSoil = async (req, res) => {
+  const { name, description } = req.body;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ message: 'No file uploaded' });
+  }
+
   try {
-    const newSoil = await prisma.soil.create({
-      data: { name, description, geometry },
+    const soil = await prisma.soil.create({
+      data: {
+        name,
+        description,
+        fileName: file.originalname,
+        filePath: file.path,
+        fileSize: file.size,
+        fileType: file.mimetype,
+      },
     });
-    res.status(200).json({ message: 'Soil data added', newSoil });
+    res.status(201).json({ message: 'File uploaded successfully', soil });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Failed to create soil data' });
+    res.status(500).json({ message: 'Failed to upload file', error });
   }
 };
 
-export const updateSoil = async (req, res) => {
+const updateSoil = async (req, res) => {
   const { id } = req.params;
   const { name, description, geometry } = req.body;
   try {
@@ -49,7 +66,7 @@ export const updateSoil = async (req, res) => {
   }
 };
 
-export const deleteSoil = async (req, res) => {
+const deleteSoil = async (req, res) => {
   const { id } = req.params;
   try {
     await prisma.soil.delete({ where: { id: Number(id) } });
@@ -58,4 +75,12 @@ export const deleteSoil = async (req, res) => {
     console.error(error);
     res.status(500).json({ message: 'Failed to delete soil' });
   }
+};
+
+module.exports = {
+  getSoils,
+  getSoil,
+  createSoil,
+  updateSoil,
+  deleteSoil,
 };

@@ -1,0 +1,20 @@
+const express = require('express');
+const multer = require('multer');
+const {
+  getProtectedAreas,
+  getProtectedArea,
+  createProtectedArea,
+  updateProtectedArea,
+  deleteProtectedArea,
+} = require('../controllers/protectedAreasController');
+
+const router = express.Router();
+const upload = multer({ dest: 'uploads/' });
+
+router.get('/', getProtectedAreas);
+router.get('/:id', getProtectedArea);
+router.post('/', upload.single('file'), createProtectedArea);
+router.put('/:id', updateProtectedArea);
+router.delete('/:id', deleteProtectedArea);
+
+module.exports = router;

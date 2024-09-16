@@ -1,6 +1,11 @@
-const prisma = require('../lib/prisma');
+const prisma = require('../Lib/prisma.js');
+const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
 
-export const getDigitalElevationModels = async (req, res) => {
+dotenv.config();
+
+const getDigitalElevationModels = async (req, res) => {
   try {
     const digitalElevationModels =
       await prisma.digitalElevationModel.findMany();
@@ -13,7 +18,7 @@ export const getDigitalElevationModels = async (req, res) => {
   }
 };
 
-export const getDigitalElevationModel = async (req, res) => {
+const getDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
   try {
     const digitalElevationModel = await prisma.digitalElevationModel.findUnique(
@@ -28,27 +33,32 @@ export const getDigitalElevationModel = async (req, res) => {
   }
 };
 
-export const createDigitalElevationModel = async (req, res) => {
-  const { name, resolution, geometry } = req.body;
+const createDem = async (req, res) => {
+  const { name, description } = req.body;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ message: 'No file uploaded' });
+  }
+
   try {
-    const newDigitalElevationModel = await prisma.digitalElevationModel.create({
-      data: { name, resolution, geometry },
+    const dem = await prisma.digitalElevationModel.create({
+      data: {
+        name,
+        description,
+        fileName: file.originalname,
+        filePath: file.path,
+        fileSize: file.size,
+        fileType: file.mimetype,
+      },
     });
-    res
-      .status(200)
-      .json({
-        message: 'Digital elevation model data added',
-        newDigitalElevationModel,
-      });
+    res.status(201).json({ message: 'File uploaded successfully', dem });
   } catch (error) {
-    console.error(error);
-    res
-      .status(500)
-      .json({ message: 'Failed to create digital elevation model data' });
+    res.status(500).json({ message: 'Failed to upload file', error });
   }
 };
 
-export const updateDigitalElevationModel = async (req, res) => {
+const updateDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
   const { name, resolution, geometry } = req.body;
   try {
@@ -66,7 +76,7 @@ export const updateDigitalElevationModel = async (req, res) => {
   }
 };
 
-export const deleteDigitalElevationModel = async (req, res) => {
+const deleteDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
   try {
     await prisma.digitalElevationModel.delete({ where: { id: Number(id) } });
@@ -77,4 +87,12 @@ export const deleteDigitalElevationModel = async (req, res) => {
       .status(500)
       .json({ message: 'Failed to delete digital elevation model' });
   }
+};
+
+module.exports = {
+  getDigitalElevationModels,
+  getDigitalElevationModel,
+  createDem,
+  updateDigitalElevationModel,
+  deleteDigitalElevationModel,
 };
