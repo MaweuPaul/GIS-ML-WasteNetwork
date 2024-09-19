@@ -188,9 +188,32 @@ const UploadPage = () => {
     let payload = {};
 
     if (dataTypeKey === 'soils') {
+      // Modify the soil features to match the new model structure
+      const features = Array.isArray(section.geojson.features)
+        ? section.geojson.features
+        : [section.geojson];
+
+      const modifiedFeatures = features.map((feature) => ({
+        type: feature.type,
+        geometry: {
+          type: feature.geometry.type,
+          coordinates: feature.geometry.coordinates,
+          bbox: feature.geometry.bbox,
+        },
+        properties: {
+          objectId: feature.properties.OBJECTID || feature.properties.objectId,
+          featureId: feature.properties.Id || feature.properties.featureId,
+          gridcode: feature.properties.gridcode,
+          shapeLeng:
+            feature.properties.Shape_Leng || feature.properties.shapeLeng,
+          shapeArea:
+            feature.properties.Shape_Area || feature.properties.shapeArea,
+          soilType: feature.properties.soil_type || feature.properties.soilType,
+        },
+      }));
+
       payload = {
-        name: section.name,
-        features: section.geojson,
+        features: modifiedFeatures,
       };
     } else {
       payload = {
@@ -233,12 +256,14 @@ const UploadPage = () => {
       setIsUploading(false);
     }
   };
+
   const handleCleanDatabase = async () => {
     try {
       setMessage('Cleaning database...');
       const responses = await Promise.all([
         axios.delete('http://localhost:3000/api/rivers/deleteAll'),
         axios.delete('http://localhost:3000/api/protected-areas/deleteAll'),
+        axios.delete('http://localhost:3000/api/soils/deleteAll'),
         // Add more delete requests for other data types here
       ]);
       const totalDeleted = responses.reduce(
@@ -264,7 +289,11 @@ const UploadPage = () => {
   };
   return (
     <div className="bg-gray-50 min-h-screen">
-      <Navbar activePage={activePage} setActivePage={setActivePage} />
+      <Navbar
+        activePage={activePage}
+        setActivePage={setActivePage}
+        handleCleanDatabase={handleCleanDatabase}
+      />
       <div className="flex pt-16">
         <Sidebar
           activeSection={activeSection}
@@ -277,12 +306,7 @@ const UploadPage = () => {
               <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">
                 Upload Geographical Data
               </h1>
-              <button
-                onClick={handleCleanDatabase}
-                className="mb-8 py-2 px-4 bg-red-600 text-white rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50"
-              >
-                Clean Database
-              </button>
+
               {dataTypes.map((type) => (
                 <div
                   key={type.key}
