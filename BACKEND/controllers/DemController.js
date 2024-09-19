@@ -1,8 +1,7 @@
 const prisma = require('../Lib/prisma.js');
-const dotenv = require('dotenv');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
-
+const dotenv = require('dotenv');
 dotenv.config();
 
 const getDigitalElevationModels = async (req, res) => {
@@ -33,8 +32,8 @@ const getDigitalElevationModel = async (req, res) => {
   }
 };
 
-const createDem = async (req, res) => {
-  const { name, description } = req.body;
+const createDigitalElevationModel = async (req, res) => {
+  const { name, description, geometry } = req.body;
   const file = req.file;
 
   if (!file) {
@@ -42,30 +41,40 @@ const createDem = async (req, res) => {
   }
 
   try {
-    const dem = await prisma.digitalElevationModel.create({
+    const digitalElevationModel = await prisma.digitalElevationModel.create({
       data: {
         name,
         description,
-        fileName: file.originalname,
+        fileName: file.filename,
         filePath: file.path,
         fileSize: file.size,
         fileType: file.mimetype,
+        geom: JSON.parse(geometry),
       },
     });
-    res.status(201).json({ message: 'File uploaded successfully', dem });
+    res
+      .status(201)
+      .json({ message: 'File uploaded successfully', digitalElevationModel });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to upload file', error });
+    console.error('Error in createDigitalElevationModel:', error);
+    res
+      .status(500)
+      .json({ message: 'Failed to upload file', error: error.message });
   }
 };
 
 const updateDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
-  const { name, resolution, geometry } = req.body;
+  const { name, description, geometry } = req.body;
   try {
     const updatedDigitalElevationModel =
       await prisma.digitalElevationModel.update({
         where: { id: Number(id) },
-        data: { name, resolution, geometry },
+        data: {
+          name,
+          description,
+          geom: JSON.parse(geometry),
+        },
       });
     res.json(updatedDigitalElevationModel);
   } catch (error) {
@@ -92,7 +101,7 @@ const deleteDigitalElevationModel = async (req, res) => {
 module.exports = {
   getDigitalElevationModels,
   getDigitalElevationModel,
-  createDem,
+  createDigitalElevationModel,
   updateDigitalElevationModel,
   deleteDigitalElevationModel,
 };
