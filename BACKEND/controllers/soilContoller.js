@@ -25,13 +25,12 @@ const getSoil = async (req, res) => {
 };
 
 const createSoils = async (req, res) => {
-  const { name, type, features } = req.body;
-  console.log(features);
+  const { features } = req.body;
 
-  if (type !== 'FeatureCollection' || !Array.isArray(features)) {
+  if (!Array.isArray(features)) {
     return res
       .status(400)
-      .json({ message: 'Invalid input: Expected a FeatureCollection' });
+      .json({ message: 'Invalid input: Expected an array of features' });
   }
 
   try {
@@ -40,26 +39,15 @@ const createSoils = async (req, res) => {
         prisma.soil.create({
           data: {
             type: feature.type,
-            name: name,
             geometryType: feature.geometry.type,
             coordinates: feature.geometry.coordinates,
             bbox: feature.geometry.bbox,
-            area: feature.properties.AREA,
-            perimeter: feature.properties.PERIMETER,
-            kensots: feature.properties.KENSOTS_,
-            kensotsId: feature.properties.KENSOTS_ID,
-            suid: feature.properties.SUID,
-            newSuid: feature.properties.NEWSUID,
-            slop: feature.properties.SLOP,
-            reli: feature.properties.RELI,
-            lndf: feature.properties.LNDF,
-            hyps: feature.properties.HYPS,
-            lith: feature.properties.LITH,
-            isocsuid: feature.properties.ISOCSUID,
-            suid12: feature.properties.SUID_12,
-            firstOfCla: feature.properties.FIRSTOFCLA,
-            firstOfSum: feature.properties.FIRSTOFSUM,
-            link: feature.properties.LINK,
+            objectId: feature.properties.objectId,
+            featureId: feature.properties.featureId,
+            gridcode: feature.properties.gridcode,
+            shapeLeng: feature.properties.shapeLeng,
+            shapeArea: feature.properties.shapeArea,
+            soilType: feature.properties.soilType,
           },
         })
       )
