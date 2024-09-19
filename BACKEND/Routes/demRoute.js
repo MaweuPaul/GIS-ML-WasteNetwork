@@ -14,7 +14,7 @@ const upload = multer({ dest: 'uploads/' });
 
 router.get('/', getDigitalElevationModels);
 router.get('/:id', getDigitalElevationModel);
-router.post('/', upload.single('file'), createDem);
+router.post('/', upload.single('file'), createDigitalElevationModel);
 router.put('/:id', updateDigitalElevationModel);
 router.delete('/:id', deleteDigitalElevationModel);
 
