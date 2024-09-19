@@ -1,5 +1,5 @@
 const prisma = require('../Lib/prisma.js');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const dotenv = require('dotenv');
 dotenv.config();
@@ -28,39 +28,47 @@ const getProtectedArea = async (req, res) => {
 };
 
 const createProtectedArea = async (req, res) => {
-  const { name, description } = req.body;
-  const file = req.file;
-
-  if (!file) {
-    return res.status(400).json({ message: 'No file uploaded' });
-  }
+  const { name, geojson } = req.body;
 
   try {
-    const protectedArea = await prisma.protectedArea.create({
-      data: {
-        name,
-        description,
-        fileName: file.originalname,
-        filePath: file.path,
-        fileSize: file.size,
-        fileType: file.mimetype,
-      },
-    });
-    res
-      .status(201)
-      .json({ message: 'File uploaded successfully', protectedArea });
+    const createdAreas = await Promise.all(
+      geojson.features.map(async (feature) => {
+        const { type, coordinates, bbox } = feature.geometry;
+        const { AREANAME, ...otherProperties } = feature.properties;
+
+        return await prisma.protectedArea.create({
+          data: {
+            name: AREANAME,
+            type: type,
+            coordinates: coordinates,
+            bbox: bbox || [],
+            properties: otherProperties,
+          },
+        });
+      })
+    );
+
+    res.status(201).json({ message: 'Protected areas created', createdAreas });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to upload file', error });
+    console.error('Error creating protected areas:', error);
+    res.status(500).json({
+      message: 'Failed to create protected area data',
+      error: error.message,
+    });
   }
 };
 
 const updateProtectedArea = async (req, res) => {
   const { id } = req.params;
-  const { name, description, area, geometry } = req.body;
+  const { name, description, geometry } = req.body;
   try {
     const updatedProtectedArea = await prisma.protectedArea.update({
       where: { id: Number(id) },
-      data: { name, description, area, geometry },
+      data: {
+        name,
+        description,
+        geom: JSON.parse(geometry),
+      },
     });
     res.json(updatedProtectedArea);
   } catch (error) {
@@ -79,11 +87,30 @@ const deleteProtectedArea = async (req, res) => {
     res.status(500).json({ message: 'Failed to delete protected area' });
   }
 };
-
+const deleteAllProtectedAreas = async (req, res) => {
+  try {
+    const deletedCount = await prisma.protectedArea.deleteMany();
+    res
+      .status(200)
+      .json({
+        message: `Deleted ${deletedCount.count} protected areas`,
+        count: deletedCount.count,
+      });
+  } catch (error) {
+    console.error('Error deleting all protected areas:', error);
+    res
+      .status(500)
+      .json({
+        message: 'Failed to delete all protected areas',
+        error: error.message,
+      });
+  }
+};
 module.exports = {
   getProtectedAreas,
   getProtectedArea,
   createProtectedArea,
   updateProtectedArea,
   deleteProtectedArea,
+  deleteAllProtectedAreas,
 };
