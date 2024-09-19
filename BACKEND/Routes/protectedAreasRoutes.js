@@ -6,6 +6,7 @@ const {
   createProtectedArea,
   updateProtectedArea,
   deleteProtectedArea,
+  deleteAllProtectedAreas,
 } = require('../controllers/protectedAreasController');
 
 const router = express.Router();
@@ -15,6 +16,7 @@ router.get('/', getProtectedAreas);
 router.get('/:id', getProtectedArea);
 router.post('/', upload.single('file'), createProtectedArea);
 router.put('/:id', updateProtectedArea);
+router.delete('/deleteAll', deleteAllProtectedAreas);
 router.delete('/:id', deleteProtectedArea);
 
 module.exports = router;
