@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const path = require('path');
 const areaOfInterestController = require('../Controllers/aoicontroller.js');
 
 const router = express.Router();
@@ -27,7 +28,7 @@ const upload = multer({
 router.post(
   '/upload',
   upload.single('file'),
-  areaOfInterestController.uploadAreaOfInterest
+  areaOfInterestController.createAreaOfInterest
 );
 
 module.exports = router;
