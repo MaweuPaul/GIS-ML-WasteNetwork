@@ -5,70 +5,91 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+model AreaOfInterest {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String
+  geom        Unsupported("geometry(Geometry, 4326)")
+  properties  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Soil {
   id          Int      @id @default(autoincrement())
-  name        String
-  description String
-  fileName    String
-  filePath    String
-  fileSize    Int
-  fileType    String
-}
+  type        String   // "Feature"
+  name        String 
+  // Geometry
+  geometryType String  // "Polygon"
+  coordinates  Json    // Store the coordinates array as JSON
+  bbox         Float[] // Bounding box
+  // Properties
+   shape_area    Float
+  soil_type     String
+  shape_length  Float
 
-model ProtectedArea {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String
-  fileName    String
-  filePath    String
-  fileSize    Int
-  fileType    String
-}
-
-model River {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String
-  fileName    String
-  filePath    String
-  fileSize    Int
-  fileType    String
-}
-
-model Road {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String
-  fileName    String
-  filePath    String
-  fileSize    Int
-  fileType    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model DigitalElevationModel {
   id          Int      @id @default(autoincrement())
   name        String
-  description String
-  fileName    String
-  filePath    String
-  fileSize    Int
-  fileType    String
+  description String?
+  geom        Unsupported("geometry(Geometry, 4326)")
+  properties  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Geology {
   id          Int      @id @default(autoincrement())
   name        String
-  description String
-  fileName    String
-  filePath    String
-  fileSize    Int
-  fileType    String
+  description String?
+  geom        Unsupported("geometry(Geometry, 4326)")
+  properties  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ProtectedArea {
+  id          Int      @id @default(autoincrement())
+  name        String   // This will store the "AREANAME" from properties
+  type        String   // This will store the geometry type (e.g., "MultiPolygon", "Polygon")
+  coordinates Json     // This will store the coordinates array
+  bbox        Float[]  // This will store the bounding box
+  properties  Json     // This will store all other properties
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Road {
+  id          Int      @id @default(autoincrement())
+  name        String?
+  type        String   // e.g., "LineString"
+  coordinates Json     // Store coordinates as a JSON array
+  properties  Json     // Store properties as a JSON object
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model River {
+  id          Int       @id @default(autoincrement())
+  name        String
+  type        String    // e.g., "MultiLineString"
+  coordinates Json      // Store coordinates as a JSON array
+  bbox        Float[]   // Store bounding box as an array of floats
+  properties  Json      // Store properties as a JSON object
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
