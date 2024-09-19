@@ -4,31 +4,70 @@ import { useDropzone } from 'react-dropzone';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/navbar';
 import ResultsPage from '../PAGES/resultsPage';
+import shp from 'shpjs';
 
 const dataTypes = [
+  { key: 'area-of-interest', label: 'Area of Interest Shapefile' },
   { key: 'soils', label: 'Soils' },
   { key: 'geology', label: 'Geology' },
   { key: 'digitalElevationModel', label: 'Digital Elevation Model' },
-  { key: 'protectedAreas', label: 'Protected Areas' },
+  { key: 'protected-areas', label: 'Protected Areas' },
   { key: 'rivers', label: 'Rivers' },
   { key: 'roads', label: 'Roads' },
 ];
 
-const DataTypeSection = ({ dataType, data, setData }) => {
+const DataTypeSection = ({
+  dataType,
+  data,
+  setData,
+  onUpload,
+  isUploading,
+  uploadSuccess,
+}) => {
   const onDrop = useCallback(
-    (acceptedFiles) => {
-      setData((prevData) => ({
-        ...prevData,
-        [dataType.key]: {
-          ...prevData[dataType.key],
-          file: acceptedFiles[0],
-        },
-      }));
+    async (acceptedFiles) => {
+      try {
+        const filesObject = {};
+        for (const file of acceptedFiles) {
+          const extension = file.name.split('.').pop().toLowerCase();
+          if (['shp', 'dbf', 'prj', 'cpg'].includes(extension)) {
+            filesObject[extension] = await file.arrayBuffer();
+          }
+        }
+
+        if (!filesObject.shp) {
+          throw new Error('SHP file is required');
+        }
+
+        const geojson = await shp(filesObject);
+        console.log('Files object:', Object.keys(filesObject));
+        console.log('Converted GeoJSON:', geojson);
+        console.log('GeoJSON type:', geojson.type);
+        console.log(
+          'Number of features:',
+          geojson.features ? geojson.features.length : 'N/A'
+        );
+        setData((prevData) => ({
+          ...prevData,
+          [dataType.key]: {
+            ...prevData[dataType.key],
+            files: acceptedFiles,
+            geojson: geojson,
+          },
+        }));
+      } catch (error) {
+        console.error('Error converting shapefile to GeoJSON:', error);
+        alert('Error converting shapefile to GeoJSON. Please try again.');
+      }
     },
     [dataType.key, setData]
   );
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop });
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: undefined,
+    multiple: true,
+  });
 
   return (
     <div className="mb-12">
@@ -53,26 +92,6 @@ const DataTypeSection = ({ dataType, data, setData }) => {
           required
         />
       </div>
-      <div className="mt-4">
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Description:
-        </label>
-        <textarea
-          value={data[dataType.key].description}
-          onChange={(e) =>
-            setData((prevData) => ({
-              ...prevData,
-              [dataType.key]: {
-                ...prevData[dataType.key],
-                description: e.target.value,
-              },
-            }))
-          }
-          rows="3"
-          className="w-full px-3 py-2 border border-gray-300 rounded-md"
-          required
-        />
-      </div>
       <div
         {...getRootProps()}
         className={`mt-4 p-8 border-2 border-dashed rounded-md cursor-pointer ${
@@ -81,18 +100,37 @@ const DataTypeSection = ({ dataType, data, setData }) => {
       >
         <input {...getInputProps()} />
         <p className="text-center text-lg text-gray-600">
-          {data[dataType.key].file
-            ? data[dataType.key].file.name
-            : 'Drag & drop a file here, or click to select'}
+          {data[dataType.key].files
+            ? `${data[dataType.key].files.length} files selected`
+            : `Drag & drop .shp, .dbf, .prj, and .cpg files here, or click to select`}
         </p>
       </div>
+      <button
+        onClick={() => onUpload(dataType.key)}
+        disabled={isUploading || uploadSuccess}
+        className={`mt-4 w-full py-3 px-4 border border-transparent rounded-md text-lg font-medium text-white 
+          ${
+            isUploading
+              ? 'bg-blue-400 cursor-not-allowed'
+              : uploadSuccess
+              ? 'bg-green-500 cursor-not-allowed'
+              : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+          }`}
+      >
+        {isUploading
+          ? 'Uploading...'
+          : uploadSuccess
+          ? 'Uploaded Successfully'
+          : 'Upload'}
+      </button>
     </div>
   );
 };
+
 const Sidebar = ({ activeSection, setActiveSection, data }) => {
   const isComplete = (type) => {
     const section = data[type.key];
-    return section.name && section.description && section.file;
+    return section.name && section.files;
   };
 
   return (
@@ -118,80 +156,112 @@ const Sidebar = ({ activeSection, setActiveSection, data }) => {
     </nav>
   );
 };
+
 const UploadPage = () => {
   const [data, setData] = useState(
     dataTypes.reduce(
       (acc, type) => ({
         ...acc,
-        [type.key]: { name: '', description: '', file: null },
+        [type.key]: { name: '', files: null, geojson: null },
       }),
       {}
     )
   );
   const [message, setMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState({});
   const [activeSection, setActiveSection] = useState(dataTypes[0].key);
   const [activePage, setActivePage] = useState('upload');
 
-  const handleUpload = async () => {
-    const incompleteSection = dataTypes.find((type) => {
-      const section = data[type.key];
-      return !section.name || !section.description || !section.file;
-    });
-
-    if (incompleteSection) {
-      setActiveSection(incompleteSection.key);
+  const handleUpload = async (dataTypeKey) => {
+    const section = data[dataTypeKey];
+    if (!section.name || !section.geojson) {
       setMessage(
-        `Please complete all fields for ${incompleteSection.label} before proceeding.`
+        `Please complete all fields for ${dataTypeKey} before uploading.`
       );
       return;
     }
 
-    setIsLoading(true);
-    setMessage('');
+    setIsUploading(true);
+    setMessage('Preparing upload...');
 
-    const uploadPromises = dataTypes.map((type) => {
-      const formData = new FormData();
-      formData.append('file', data[type.key].file);
-      formData.append('name', data[type.key].name);
-      formData.append('description', data[type.key].description);
+    let payload = {};
 
-      return axios.post(`http://localhost:3000/${type.key}s`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-    });
+    if (dataTypeKey === 'soils') {
+      payload = {
+        name: section.name,
+        features: section.geojson,
+      };
+    } else {
+      payload = {
+        name: section.name,
+        geojson: section.geojson,
+      };
+    }
+
+    let url = `http://localhost:3000/api/${dataTypeKey}`;
+    console.log('Uploading data type:', dataTypeKey);
+    console.log('Payload:', JSON.stringify(payload, null, 2));
 
     try {
-      await Promise.all(uploadPromises);
-      setMessage('All data uploaded successfully!');
+      setMessage('Sending request to server...');
+      const response = await axios.post(url, payload, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      console.log('Server response:', response.data);
+      setMessage(`${dataTypeKey} data uploaded successfully!`);
+      setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
+
+      // Move to the next section
+      const currentIndex = dataTypes.findIndex(
+        (type) => type.key === dataTypeKey
+      );
+      if (currentIndex < dataTypes.length - 1) {
+        setActiveSection(dataTypes[currentIndex + 1].key);
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      if (error.response) {
+        console.error('Error response:', error.response.data);
+      } else if (error.request) {
+        console.error('No response received:', error.request);
+      } else {
+        console.error('Error setting up request:', error.message);
+      }
+      setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+  const handleCleanDatabase = async () => {
+    try {
+      setMessage('Cleaning database...');
+      const responses = await Promise.all([
+        axios.delete('http://localhost:3000/api/rivers/deleteAll'),
+        axios.delete('http://localhost:3000/api/protected-areas/deleteAll'),
+        // Add more delete requests for other data types here
+      ]);
+      const totalDeleted = responses.reduce(
+        (sum, response) => sum + response.data.count,
+        0
+      );
+      setMessage(`Database cleaned. ${totalDeleted} items deleted.`);
+      // Reset state
       setData(
         dataTypes.reduce(
           (acc, type) => ({
             ...acc,
-            [type.key]: { name: '', description: '', file: null },
+            [type.key]: { name: '', files: null, geojson: null },
           }),
           {}
         )
       );
+      setUploadSuccess({});
     } catch (error) {
-      setMessage('Error uploading one or more files. Please try again.');
-      console.error('Upload error:', error);
-    } finally {
-      setIsLoading(false);
+      console.error('Error cleaning database:', error);
+      setMessage(`Error cleaning database: ${error.message}`);
     }
   };
-
-  const handleNext = () => {
-    const currentIndex = dataTypes.findIndex(
-      (type) => type.key === activeSection
-    );
-    if (currentIndex < dataTypes.length - 1) {
-      setActiveSection(dataTypes[currentIndex + 1].key);
-    }
-  };
-
-  const isLastSection = activeSection === dataTypes[dataTypes.length - 1].key;
-
   return (
     <div className="bg-gray-50 min-h-screen">
       <Navbar activePage={activePage} setActivePage={setActivePage} />
@@ -207,6 +277,12 @@ const UploadPage = () => {
               <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">
                 Upload Geographical Data
               </h1>
+              <button
+                onClick={handleCleanDatabase}
+                className="mb-8 py-2 px-4 bg-red-600 text-white rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50"
+              >
+                Clean Database
+              </button>
               {dataTypes.map((type) => (
                 <div
                   key={type.key}
@@ -217,28 +293,17 @@ const UploadPage = () => {
                     dataType={type}
                     data={data}
                     setData={setData}
+                    onUpload={handleUpload}
+                    isUploading={isUploading}
+                    uploadSuccess={uploadSuccess[type.key]}
                   />
                 </div>
               ))}
-              <button
-                onClick={isLastSection ? handleUpload : handleNext}
-                disabled={isLoading}
-                className={`w-full py-3 px-4 border border-transparent rounded-md text-lg font-medium text-white ${
-                  isLoading
-                    ? 'bg-blue-400 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
-                }`}
-              >
-                {isLoading
-                  ? 'Processing...'
-                  : isLastSection
-                  ? 'Upload All Data'
-                  : 'Next'}
-              </button>
               {message && (
                 <p
                   className={`mt-4 text-lg ${
-                    message.includes('successfully')
+                    message.includes('successfully') ||
+                    message.includes('deleted')
                       ? 'text-green-600'
                       : 'text-red-600'
                   }`}
