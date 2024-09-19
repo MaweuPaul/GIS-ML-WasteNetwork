@@ -1,5 +1,5 @@
 const prisma = require('../Lib/prisma.js');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const dotenv = require('dotenv');
 dotenv.config();
@@ -26,37 +26,45 @@ const getRoad = async (req, res) => {
 };
 
 const createRoad = async (req, res) => {
-  const { name, description } = req.body;
-  const file = req.file;
-
-  if (!file) {
-    return res.status(400).json({ message: 'No file uploaded' });
-  }
+  const { geojson } = req.body;
 
   try {
-    const road = await prisma.road.create({
-      data: {
-        name,
-        description,
-        fileName: file.originalname,
-        filePath: file.path,
-        fileSize: file.size,
-        fileType: file.mimetype,
-      },
-    });
-    res.status(201).json({ message: 'File uploaded successfully', road });
+    const createdRoads = await Promise.all(
+      geojson.features.map(async (feature) => {
+        const { type, coordinates } = feature.geometry;
+        const { name, ...otherProperties } = feature.properties;
+
+        return await prisma.road.create({
+          data: {
+            name: name || 'Unnamed Road',
+            type: type,
+            coordinates: coordinates,
+            properties: otherProperties,
+          },
+        });
+      })
+    );
+
+    res.status(201).json({ message: 'Roads created', createdRoads });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to upload file', error });
+    console.error('Error creating roads:', error);
+    res
+      .status(500)
+      .json({ message: 'Failed to create road data', error: error.message });
   }
 };
 
 const updateRoad = async (req, res) => {
   const { id } = req.params;
-  const { name, type, length, geometry } = req.body;
+  const { name, description, geometry } = req.body;
   try {
     const updatedRoad = await prisma.road.update({
       where: { id: Number(id) },
-      data: { name, type, length, geometry },
+      data: {
+        name,
+        description,
+        geom: JSON.parse(geometry),
+      },
     });
     res.json(updatedRoad);
   } catch (error) {
@@ -76,10 +84,25 @@ const deleteRoad = async (req, res) => {
   }
 };
 
+const deleteAllRoads = async (req, res) => {
+  try {
+    const deletedCount = await prisma.road.deleteMany();
+    res.status(200).json({
+      message: `Deleted ${deletedCount.count} roads`,
+      count: deletedCount.count,
+    });
+  } catch (error) {
+    console.error('Error deleting all roads:', error);
+    res
+      .status(500)
+      .json({ message: 'Failed to delete all roads', error: error.message });
+  }
+};
 module.exports = {
   getRoads,
   getRoad,
   createRoad,
   updateRoad,
   deleteRoad,
+  deleteAllRoads,
 };
