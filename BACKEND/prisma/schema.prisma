@@ -26,17 +26,22 @@ model AreaOfInterest {
 }
 
 model Soil {
-  id          Int      @id @default(autoincrement())
-  type        String   // "Feature"
-  name        String 
+  id           Int      @id @default(autoincrement())
+  type         String   // "Feature"
+  name         String?  // Optional, as it wasn't in the original GeoJSON
+
   // Geometry
-  geometryType String  // "Polygon"
-  coordinates  Json    // Store the coordinates array as JSON
-  bbox         Float[] // Bounding box
+  geometryType String   // "Polygon"
+  coordinates  Json     // Store the coordinates array as JSON
+  bbox         Float[]  // Bounding box
+
   // Properties
-   shape_area    Float
-  soil_type     String
-  shape_length  Float
+  objectId     Int
+  featureId    Int
+  gridcode     Int
+  shapeLeng    Float
+  shapeArea    Float
+  soilType     String
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
