@@ -16,20 +16,42 @@ datasource db {
 }
 
 model AreaOfInterest {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String
-  geom        Unsupported("geometry(Geometry, 4326)")
-  properties  Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  type         String   // "Feature"
+  name         String?  // Optional, can be derived from properties.NAME_2
+
+  // Geometry
+  geometryType String   // "Polygon"
+  coordinates  Json     // Store the coordinates array as JSON
+  bbox         Float[]  // Bounding box
+
+  // Properties
+  objectId     Int
+  iso          String
+  country      String   // NAME_0 in the original JSON
+  provinceId   Int      // ID_1 in the original JSON
+  provinceName String   // NAME_1 in the original JSON
+  districtId   Int      // ID_2 in the original JSON
+  districtName String   // NAME_2 in the original JSON
+  ccn          Int      // CCN_2 in the original JSON
+  type2        String   // TYPE_2 in the original JSON
+  engType      String   // ENGTYPE_2 in the original JSON
+  shapeLeng    Float
+  shapeArea    Float
+  area         Float
+
+  // Additional fields
+  properties   Json     // Store any additional properties as JSON
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([geometryType, bbox])
 }
 
 model Soil {
   id           Int      @id @default(autoincrement())
   type         String   // "Feature"
-  name         String?  // Optional, as it wasn't in the original GeoJSON
-
+  name         String?  // 
   // Geometry
   geometryType String   // "Polygon"
   coordinates  Json     // Store the coordinates array as JSON
@@ -46,15 +68,15 @@ model Soil {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
-
 model DigitalElevationModel {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  geom        Unsupported("geometry(Geometry, 4326)")
-  properties  Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  name         String
+  bbox         Float[]  // Bounding box
+  coordinates  Json     // Store the coordinates array as JSON
+  geometryType String   // "Polygon" in this case
+  elevation    Int      // This will store the gridcode/elevation value
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model Geology {

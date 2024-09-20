@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import axios from 'axios';
 import { useDropzone } from 'react-dropzone';
-import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/navbar';
 import ResultsPage from '../PAGES/resultsPage';
 import shp from 'shpjs';
@@ -187,8 +186,42 @@ const UploadPage = () => {
 
     let payload = {};
 
-    if (dataTypeKey === 'soils') {
-      // Modify the soil features to match the new model structure
+    if (dataTypeKey === 'area-of-interest') {
+      const feature =
+        section.geojson.type === 'Feature'
+          ? section.geojson
+          : section.geojson.features[0];
+      payload = {
+        feature: {
+          type: feature.type,
+          geometry: {
+            type: feature.geometry.type,
+            coordinates: feature.geometry.coordinates,
+            bbox: feature.geometry.bbox,
+          },
+          properties: {
+            ...feature.properties,
+            NAME_2: section.name, // Use the input name as the district name
+          },
+        },
+      };
+    } else if (dataTypeKey === 'digitalElevationModel') {
+      const features = Array.isArray(section.geojson.features)
+        ? section.geojson.features
+        : [section.geojson];
+
+      const modifiedFeatures = features.map((feature) => ({
+        name: section.name,
+        bbox: feature.geometry.bbox || [],
+        coordinates: feature.geometry.coordinates,
+        geometryType: feature.geometry.type,
+        elevation: feature.properties.gridcode, // Assuming gridcode represents elevation
+      }));
+
+      payload = {
+        features: modifiedFeatures,
+      };
+    } else if (dataTypeKey === 'soils') {
       const features = Array.isArray(section.geojson.features)
         ? section.geojson.features
         : [section.geojson];
@@ -264,6 +297,7 @@ const UploadPage = () => {
         axios.delete('http://localhost:3000/api/rivers/deleteAll'),
         axios.delete('http://localhost:3000/api/protected-areas/deleteAll'),
         axios.delete('http://localhost:3000/api/soils/deleteAll'),
+        axios.delete('http://localhost:3000/api/area-of-interest/deleteAll'),
         // Add more delete requests for other data types here
       ]);
       const totalDeleted = responses.reduce(
@@ -287,6 +321,7 @@ const UploadPage = () => {
       setMessage(`Error cleaning database: ${error.message}`);
     }
   };
+
   return (
     <div className="bg-gray-50 min-h-screen">
       <Navbar
