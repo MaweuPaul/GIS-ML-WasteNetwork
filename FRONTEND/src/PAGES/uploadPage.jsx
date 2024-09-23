@@ -4,6 +4,7 @@ import { useDropzone } from 'react-dropzone';
 import Navbar from '../components/navbar';
 import ResultsPage from '../PAGES/resultsPage';
 import shp from 'shpjs';
+import MapVisualization from '../components/mapVisualizer';
 
 const dataTypes = [
   { key: 'area-of-interest', label: 'Area of Interest Shapefile' },
@@ -22,30 +23,40 @@ const DataTypeSection = ({
   onUpload,
   isUploading,
   uploadSuccess,
+  setAllGeoJsonData,
 }) => {
   const onDrop = useCallback(
     async (acceptedFiles) => {
       try {
         const filesObject = {};
+        const requiredExtensions = ['shp', 'dbf', 'prj'];
+        const optionalExtensions = ['cpg'];
+        const missingRequired = [];
+
         for (const file of acceptedFiles) {
           const extension = file.name.split('.').pop().toLowerCase();
-          if (['shp', 'dbf', 'prj', 'cpg'].includes(extension)) {
+          if (
+            [...requiredExtensions, ...optionalExtensions].includes(extension)
+          ) {
             filesObject[extension] = await file.arrayBuffer();
           }
         }
 
-        if (!filesObject.shp) {
-          throw new Error('SHP file is required');
+        for (const ext of requiredExtensions) {
+          if (!filesObject[ext]) {
+            missingRequired.push(ext.toUpperCase());
+          }
+        }
+
+        if (missingRequired.length > 0) {
+          throw new Error(
+            `Missing required files: ${missingRequired.join(', ')}`
+          );
         }
 
         const geojson = await shp(filesObject);
-        console.log('Files object:', Object.keys(filesObject));
         console.log('Converted GeoJSON:', geojson);
-        console.log('GeoJSON type:', geojson.type);
-        console.log(
-          'Number of features:',
-          geojson.features ? geojson.features.length : 'N/A'
-        );
+
         setData((prevData) => ({
           ...prevData,
           [dataType.key]: {
@@ -54,12 +65,17 @@ const DataTypeSection = ({
             geojson: geojson,
           },
         }));
+
+        setAllGeoJsonData((prevData) => ({
+          ...prevData,
+          features: [...prevData.features, ...geojson.features],
+        }));
       } catch (error) {
-        console.error('Error converting shapefile to GeoJSON:', error);
-        alert('Error converting shapefile to GeoJSON. Please try again.');
+        console.error('Error processing shapefile:', error);
+        alert(`Error processing shapefile: ${error.message}`);
       }
     },
-    [dataType.key, setData]
+    [dataType.key, setData, setAllGeoJsonData]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -101,7 +117,7 @@ const DataTypeSection = ({
         <p className="text-center text-lg text-gray-600">
           {data[dataType.key].files
             ? `${data[dataType.key].files.length} files selected`
-            : `Drag & drop .shp, .dbf, .prj, and .cpg files here, or click to select`}
+            : `Drag & drop .shp, .dbf, and .prj files here (optional: .cpg), or click to select`}
         </p>
       </div>
       <button
@@ -171,6 +187,10 @@ const UploadPage = () => {
   const [uploadSuccess, setUploadSuccess] = useState({});
   const [activeSection, setActiveSection] = useState(dataTypes[0].key);
   const [activePage, setActivePage] = useState('upload');
+  const [allGeoJsonData, setAllGeoJsonData] = useState({
+    type: 'FeatureCollection',
+    features: [],
+  });
 
   const handleUpload = async (dataTypeKey) => {
     const section = data[dataTypeKey];
@@ -186,26 +206,7 @@ const UploadPage = () => {
 
     let payload = {};
 
-    if (dataTypeKey === 'area-of-interest') {
-      const feature =
-        section.geojson.type === 'Feature'
-          ? section.geojson
-          : section.geojson.features[0];
-      payload = {
-        feature: {
-          type: feature.type,
-          geometry: {
-            type: feature.geometry.type,
-            coordinates: feature.geometry.coordinates,
-            bbox: feature.geometry.bbox,
-          },
-          properties: {
-            ...feature.properties,
-            NAME_2: section.name, // Use the input name as the district name
-          },
-        },
-      };
-    } else if (dataTypeKey === 'digitalElevationModel') {
+    if (dataTypeKey === 'digitalElevationModel') {
       const features = Array.isArray(section.geojson.features)
         ? section.geojson.features
         : [section.geojson];
@@ -215,96 +216,206 @@ const UploadPage = () => {
         bbox: feature.geometry.bbox || [],
         coordinates: feature.geometry.coordinates,
         geometryType: feature.geometry.type,
-        elevation: feature.properties.gridcode, // Assuming gridcode represents elevation
+        elevation: feature.properties.gridcode,
       }));
 
-      payload = {
-        features: modifiedFeatures,
-      };
-    } else if (dataTypeKey === 'soils') {
-      const features = Array.isArray(section.geojson.features)
-        ? section.geojson.features
-        : [section.geojson];
+      const chunkSize = 10;
+      const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
 
-      const modifiedFeatures = features.map((feature) => ({
-        type: feature.type,
-        geometry: {
-          type: feature.geometry.type,
-          coordinates: feature.geometry.coordinates,
-          bbox: feature.geometry.bbox,
-        },
-        properties: {
-          objectId: feature.properties.OBJECTID || feature.properties.objectId,
-          featureId: feature.properties.Id || feature.properties.featureId,
-          gridcode: feature.properties.gridcode,
-          shapeLeng:
-            feature.properties.Shape_Leng || feature.properties.shapeLeng,
-          shapeArea:
-            feature.properties.Shape_Area || feature.properties.shapeArea,
-          soilType: feature.properties.soil_type || feature.properties.soilType,
-        },
-      }));
+      for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
+        const chunk = modifiedFeatures.slice(i, i + chunkSize);
+        payload = { features: chunk };
 
-      payload = {
-        features: modifiedFeatures,
-      };
-    } else {
-      payload = {
-        name: section.name,
-        geojson: section.geojson,
-      };
-    }
+        try {
+          setMessage(
+            `Sending chunk ${
+              Math.floor(i / chunkSize) + 1
+            } of ${totalChunks}...`
+          );
+          const response = await axios.post(
+            'http://localhost:3000/api/digital-elevation-models',
+            payload,
+            {
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+          console.log(
+            `Chunk ${Math.floor(i / chunkSize) + 1} response:`,
+            response.data
+          );
+        } catch (error) {
+          console.error('Upload error:', error);
+          setMessage(
+            `Error uploading chunk ${Math.floor(i / chunkSize) + 1}: ${
+              error.message
+            }`
+          );
+          setIsUploading(false);
+          return;
+        }
+      }
 
-    let url = `http://localhost:3000/api/${dataTypeKey}`;
-    console.log('Uploading data type:', dataTypeKey);
-    console.log('Payload:', JSON.stringify(payload, null, 2));
-
-    try {
-      setMessage('Sending request to server...');
-      const response = await axios.post(url, payload, {
-        headers: { 'Content-Type': 'application/json' },
-      });
-      console.log('Server response:', response.data);
-      setMessage(`${dataTypeKey} data uploaded successfully!`);
+      setMessage('DEM data uploaded successfully!');
       setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
-
-      // Move to the next section
-      const currentIndex = dataTypes.findIndex(
-        (type) => type.key === dataTypeKey
-      );
-      if (currentIndex < dataTypes.length - 1) {
-        setActiveSection(dataTypes[currentIndex + 1].key);
-      }
-    } catch (error) {
-      console.error('Upload error:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-      } else if (error.request) {
-        console.error('No response received:', error.request);
+    } else {
+      // Handle other data types as before
+      if (dataTypeKey === 'area-of-interest') {
+        const feature =
+          section.geojson.type === 'Feature'
+            ? section.geojson
+            : section.geojson.features[0];
+        payload = {
+          feature: {
+            type: feature.type,
+            geometry: {
+              type: feature.geometry.type,
+              coordinates: feature.geometry.coordinates,
+              bbox: feature.geometry.bbox,
+            },
+            properties: {
+              ...feature.properties,
+              NAME_2: section.name,
+            },
+          },
+        };
+      } else if (dataTypeKey === 'soils') {
+        const features = Array.isArray(section.geojson.features)
+          ? section.geojson.features
+          : [section.geojson];
+        const modifiedFeatures = features.map((feature) => ({
+          type: feature.type,
+          geometry: {
+            type: feature.geometry.type,
+            coordinates: feature.geometry.coordinates,
+            bbox: feature.geometry.bbox,
+          },
+          properties: {
+            objectId:
+              feature.properties.OBJECTID || feature.properties.objectId,
+            featureId: feature.properties.Id || feature.properties.featureId,
+            gridcode: feature.properties.gridcode,
+            shapeLeng:
+              feature.properties.Shape_Leng || feature.properties.shapeLeng,
+            shapeArea:
+              feature.properties.Shape_Area || feature.properties.shapeArea,
+            soilType:
+              feature.properties.soil_type || feature.properties.soilType,
+          },
+        }));
+        payload = { features: modifiedFeatures };
       } else {
-        console.error('Error setting up request:', error.message);
+        payload = {
+          name: section.name,
+          geojson: section.geojson,
+        };
       }
-      setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
-    } finally {
-      setIsUploading(false);
+
+      let url = `http://localhost:3000/api/${dataTypeKey}`;
+      console.log('Uploading data type:', dataTypeKey);
+      console.log('Payload:', JSON.stringify(payload, null, 2));
+
+      try {
+        setMessage('Sending request to server...');
+        const response = await axios.post(url, payload, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+        console.log('Server response:', response.data);
+        setMessage(`${dataTypeKey} data uploaded successfully!`);
+        setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
+      } catch (error) {
+        console.error('Upload error:', error);
+        if (error.response) {
+          console.error('Error response:', error.response.data);
+        } else if (error.request) {
+          console.error('No response received:', error.request);
+        } else {
+          console.error('Error setting up request:', error.message);
+        }
+        setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
+      }
     }
+
+    // Move to the next section
+    const currentIndex = dataTypes.findIndex(
+      (type) => type.key === dataTypeKey
+    );
+    if (currentIndex < dataTypes.length - 1) {
+      setActiveSection(dataTypes[currentIndex + 1].key);
+    }
+
+    setIsUploading(false);
   };
 
   const handleCleanDatabase = async () => {
     try {
-      setMessage('Cleaning database...');
-      const responses = await Promise.all([
-        axios.delete('http://localhost:3000/api/rivers/deleteAll'),
-        axios.delete('http://localhost:3000/api/protected-areas/deleteAll'),
-        axios.delete('http://localhost:3000/api/soils/deleteAll'),
-        axios.delete('http://localhost:3000/api/area-of-interest/deleteAll'),
-        // Add more delete requests for other data types here
-      ]);
-      const totalDeleted = responses.reduce(
-        (sum, response) => sum + response.data.count,
-        0
+      setMessage('Checking database status...');
+
+      // First, check if the database is empty
+      const checkResponse = await axios.get(
+        'http://localhost:3000/api/database/check'
       );
-      setMessage(`Database cleaned. ${totalDeleted} items deleted.`);
+
+      if (checkResponse.data.isEmpty) {
+        setMessage('Database is already empty. No cleaning necessary.');
+        return;
+      }
+
+      setMessage('Cleaning database...');
+      const endpoints = [
+        'rivers',
+        'protected-areas',
+        'soils',
+        'area-of-interest',
+        'digital-elevation-models',
+      ];
+
+      const responses = await Promise.all(
+        endpoints.map((endpoint) =>
+          axios
+            .delete(`http://localhost:3000/api/${endpoint}/deleteAll`)
+            .catch((error) => {
+              console.error(
+                `Error deleting ${endpoint}:`,
+                error.response || error
+              );
+              return { data: { success: false, error: error.message } };
+            })
+        )
+      );
+
+      let totalDeleted = 0;
+      const details = [];
+
+      responses.forEach((response, index) => {
+        const dataType = endpoints[index]
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, (l) => l.toUpperCase());
+        console.log(`Response for ${dataType}:`, response);
+
+        if (response.data && response.data.success) {
+          const count =
+            response.data.count !== undefined ? response.data.count : 'unknown';
+          details.push(
+            `${dataType}: Cleared successfully (${count} items deleted)`
+          );
+          if (typeof response.data.count === 'number') {
+            totalDeleted += response.data.count;
+          }
+        } else {
+          const errorMessage = response.data
+            ? response.data.error || response.data.message
+            : 'Unknown error';
+          details.push(`${dataType}: Clear operation failed (${errorMessage})`);
+        }
+      });
+
+      const deletionMessage =
+        totalDeleted > 0
+          ? `Database cleaned. ${totalDeleted} items deleted.`
+          : 'Database cleaned. No items were deleted.';
+
+      setMessage(`${deletionMessage}\n\nDetails:\n${details.join('\n')}`);
+
       // Reset state
       setData(
         dataTypes.reduce(
@@ -316,6 +427,10 @@ const UploadPage = () => {
         )
       );
       setUploadSuccess({});
+      setAllGeoJsonData({
+        type: 'FeatureCollection',
+        features: [],
+      });
     } catch (error) {
       console.error('Error cleaning database:', error);
       setMessage(`Error cleaning database: ${error.message}`);
@@ -355,6 +470,7 @@ const UploadPage = () => {
                     onUpload={handleUpload}
                     isUploading={isUploading}
                     uploadSuccess={uploadSuccess[type.key]}
+                    setAllGeoJsonData={setAllGeoJsonData}
                   />
                 </div>
               ))}
@@ -370,6 +486,12 @@ const UploadPage = () => {
                   {message}
                 </p>
               )}
+              <div className="mt-8">
+                <h2 className="text-2xl font-semibold mb-4">
+                  Data Visualization
+                </h2>
+                <MapVisualization geoJsonData={allGeoJsonData} />
+              </div>
             </>
           ) : (
             <ResultsPage />
