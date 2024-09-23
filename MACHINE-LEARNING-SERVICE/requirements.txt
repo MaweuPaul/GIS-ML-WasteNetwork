@@ -1,5 +1,7 @@
-flask
-scikit-learn
-numpy
-pandas
-joblib
+    flask
+Q    flask-cors
+    requests
+    pandas
+    scikit-learn
+    ahpy
+    joblib
