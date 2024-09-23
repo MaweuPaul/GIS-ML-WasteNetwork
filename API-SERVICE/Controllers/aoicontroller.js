@@ -54,20 +54,16 @@ const createAreaOfInterest = async (req, res) => {
         properties: feature.properties,
       },
     });
-    res
-      .status(201)
-      .json({
-        message: 'Area of interest created successfully',
-        areaOfInterest,
-      });
+    res.status(201).json({
+      message: 'Area of interest created successfully',
+      areaOfInterest,
+    });
   } catch (error) {
     console.error('Error in createAreaOfInterest:', error);
-    res
-      .status(500)
-      .json({
-        message: 'Failed to create area of interest',
-        error: error.message,
-      });
+    res.status(500).json({
+      message: 'Failed to create area of interest',
+      error: error.message,
+    });
   }
 };
 
@@ -119,11 +115,27 @@ const deleteAreaOfInterest = async (req, res) => {
 
 const deleteAllAreasOfInterest = async (req, res) => {
   try {
-    const { count } = await prisma.areaOfInterest.deleteMany();
-    res.json({ message: `${count} areas of interest deleted` });
+    const countBefore = await prisma.areaOfInterest.count();
+    console.log(`Areas of Interest count before delete: ${countBefore}`);
+
+    const deletedCount = await prisma.areaOfInterest.deleteMany();
+
+    const countAfter = await prisma.areaOfInterest.count();
+    console.log(`Areas of Interest count after delete: ${countAfter}`);
+    console.log(`Deleted ${deletedCount.count} Areas of Interest`);
+
+    res.status(200).json({
+      success: true,
+      message: `Deleted ${deletedCount.count} areas of interest`,
+      count: deletedCount.count,
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Failed to delete all areas of interest' });
+    console.error('Error deleting all areas of interest:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all areas of interest',
+      error: error.message,
+    });
   }
 };
 
