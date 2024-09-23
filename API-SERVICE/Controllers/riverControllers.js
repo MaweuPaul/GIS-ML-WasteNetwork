@@ -92,15 +92,26 @@ const deleteRiver = async (req, res) => {
 };
 const deleteAllRivers = async (req, res) => {
   try {
+    const countBefore = await prisma.river.count();
+    console.log(`Rivers count before delete: ${countBefore}`);
+
     const deletedCount = await prisma.river.deleteMany();
+
+    const countAfter = await prisma.river.count();
+    console.log(`Rivers count after delete: ${countAfter}`);
+
     res.status(200).json({
+      success: true,
       message: `Deleted ${deletedCount.count} rivers`,
       count: deletedCount.count,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: 'Failed to delete all rivers', error: error.message });
+    console.error('Error deleting all rivers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all rivers',
+      error: error.message,
+    });
   }
 };
 
