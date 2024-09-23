@@ -112,19 +112,29 @@ const deleteSoil = async (req, res) => {
 };
 const deleteAllSoils = async (req, res) => {
   try {
+    const countBefore = await prisma.soil.count();
+    console.log(`Soil records count before delete: ${countBefore}`);
+
     const deletedCount = await prisma.soil.deleteMany();
+
+    const countAfter = await prisma.soil.count();
+    console.log(`Soil records count after delete: ${countAfter}`);
+    console.log(`Deleted ${deletedCount.count} soil records`);
+
     res.status(200).json({
+      success: true,
       message: `Deleted ${deletedCount.count} soil records`,
       count: deletedCount.count,
     });
   } catch (error) {
     console.error('Error deleting all soils:', error);
-    res
-      .status(500)
-      .json({ message: 'Failed to delete all soils', error: error.message });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all soils',
+      error: error.message,
+    });
   }
 };
-
 module.exports = {
   getSoils,
   getSoil,
