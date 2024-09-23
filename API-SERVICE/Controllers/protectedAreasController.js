@@ -90,20 +90,18 @@ const deleteProtectedArea = async (req, res) => {
 const deleteAllProtectedAreas = async (req, res) => {
   try {
     const deletedCount = await prisma.protectedArea.deleteMany();
-    res
-      .status(200)
-      .json({
-        message: `Deleted ${deletedCount.count} protected areas`,
-        count: deletedCount.count,
-      });
+    res.status(200).json({
+      success: true,
+      message: `Deleted ${deletedCount.count} protected areas`,
+      count: deletedCount.count,
+    });
   } catch (error) {
     console.error('Error deleting all protected areas:', error);
-    res
-      .status(500)
-      .json({
-        message: 'Failed to delete all protected areas',
-        error: error.message,
-      });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all protected areas',
+      error: error.message,
+    });
   }
 };
 module.exports = {
