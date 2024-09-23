@@ -2,6 +2,7 @@ const prisma = require('../Lib/prisma.js');
 const fs = require('fs').promises;
 const path = require('path');
 const dotenv = require('dotenv');
+const { count } = require('console');
 dotenv.config();
 
 const getDigitalElevationModels = async (req, res) => {
@@ -33,33 +34,40 @@ const getDigitalElevationModel = async (req, res) => {
 };
 
 const createDigitalElevationModel = async (req, res) => {
-  const { name, description, geometry } = req.body;
-  const file = req.file;
+  const { features } = req.body;
 
-  if (!file) {
-    return res.status(400).json({ message: 'No file uploaded' });
+  if (!Array.isArray(features) || features.length === 0) {
+    return res.status(400).json({
+      message: 'Invalid input: Expected a non-empty array of features',
+    });
   }
 
   try {
-    const digitalElevationModel = await prisma.digitalElevationModel.create({
-      data: {
-        name,
-        description,
-        fileName: file.filename,
-        filePath: file.path,
-        fileSize: file.size,
-        fileType: file.mimetype,
-        geom: JSON.parse(geometry),
-      },
+    const createdModels = await prisma.$transaction(
+      features.map((feature) =>
+        prisma.digitalElevationModel.create({
+          data: {
+            name: feature.name,
+            bbox: feature.bbox,
+            coordinates: feature.coordinates, // Prisma will automatically handle JSON serialization
+            geometryType: feature.geometryType,
+            elevation: feature.elevation,
+          },
+        })
+      )
+    );
+
+    res.status(201).json({
+      message: 'Digital elevation models created',
+      count: createdModels.length,
+      models: createdModels,
     });
-    res
-      .status(201)
-      .json({ message: 'File uploaded successfully', digitalElevationModel });
   } catch (error) {
-    console.error('Error in createDigitalElevationModel:', error);
-    res
-      .status(500)
-      .json({ message: 'Failed to upload file', error: error.message });
+    console.error('Error creating digital elevation models:', error);
+    res.status(500).json({
+      message: 'Failed to create digital elevation models',
+      error: error.message,
+    });
   }
 };
 
@@ -98,10 +106,28 @@ const deleteDigitalElevationModel = async (req, res) => {
   }
 };
 
+const deleteAllDigitalElevationModel = async (req, res) => {
+  try {
+    const result = await prisma.digitalElevationModel.deleteMany();
+    res.status(200).json({
+      success: true,
+      message: 'Digital elevation cleared successfully',
+      count: result.count,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: 'Digital elevation could not be cleared',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getDigitalElevationModels,
   getDigitalElevationModel,
   createDigitalElevationModel,
   updateDigitalElevationModel,
+  deleteAllDigitalElevationModel,
   deleteDigitalElevationModel,
 };
