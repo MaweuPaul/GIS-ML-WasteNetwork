@@ -8,6 +8,7 @@ const roadRoutes = require('./Routes/roadRoutes.js');
 const digitalElevationModelRoutes = require('./Routes/demRoute.js');
 const areaOfInterestRoutes = require('./Routes/aoiroute.js');
 const databaseRoutes = require('./Routes/databaseRoutes.js');
+const dataRoutes = require('./Routes/dataRoutes.js');
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api/roads', roadRoutes);
 app.use('/api/digital-elevation-models', digitalElevationModelRoutes);
 app.use('/api/area-of-interest', areaOfInterestRoutes);
 app.use('/api/database', databaseRoutes);
+app.use('/api/data', dataRoutes);
 
 // Catch-all route for API
 app.use('/api/*', (req, res) => {
