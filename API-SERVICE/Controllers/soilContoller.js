@@ -1,8 +1,10 @@
 const prisma = require('../Lib/prisma.js');
 const dotenv = require('dotenv');
-
 dotenv.config();
 
+/**
+ * Fetch all Soils
+ */
 const getSoils = async (req, res) => {
   try {
     const soils = await prisma.soil.findMany();
@@ -13,10 +15,16 @@ const getSoils = async (req, res) => {
   }
 };
 
+/**
+ * Fetch a single Soil by ID
+ */
 const getSoil = async (req, res) => {
   const { id } = req.params;
   try {
     const soil = await prisma.soil.findUnique({ where: { id: Number(id) } });
+    if (!soil) {
+      return res.status(404).json({ message: 'Soil not found' });
+    }
     res.json(soil);
   } catch (error) {
     console.error(error);
@@ -24,6 +32,9 @@ const getSoil = async (req, res) => {
   }
 };
 
+/**
+ * Create multiple Soils
+ */
 const createSoils = async (req, res) => {
   const { features } = req.body;
 
@@ -34,24 +45,57 @@ const createSoils = async (req, res) => {
   }
 
   try {
-    const createdSoils = await prisma.$transaction(
-      features.map((feature) =>
-        prisma.soil.create({
-          data: {
-            type: feature.type,
-            geometryType: feature.geometry.type,
-            coordinates: feature.geometry.coordinates,
-            bbox: feature.geometry.bbox,
-            objectId: feature.properties.objectId,
-            featureId: feature.properties.featureId,
-            gridcode: feature.properties.gridcode,
-            shapeLeng: feature.properties.shapeLeng,
-            shapeArea: feature.properties.shapeArea,
-            soilType: feature.properties.soilType,
-          },
-        })
-      )
-    );
+    const soilPromises = features.map((feature) => {
+      const {
+        type,
+        geometry,
+        properties: {
+          objectId,
+          featureId,
+          gridcode,
+          shapeLeng,
+          shapeArea,
+          soilType,
+        },
+      } = feature;
+
+      const bboxArray = geometry.bbox ? `{${geometry.bbox.join(',')}}` : 'NULL';
+
+      // Use raw SQL to handle geom field
+      return prisma.$executeRaw`
+        INSERT INTO "Soil" (
+          "type",
+          "geometryType",
+          "coordinates",
+          "bbox",
+          "objectId",
+          "featureId",
+          "gridcode",
+          "shapeLeng",
+          "shapeArea",
+          "soilType",
+          "geom",
+          "createdAt",
+          "updatedAt"
+        ) VALUES (
+          ${type},
+          ${geometry.type},
+          ${JSON.stringify(geometry.coordinates)}::jsonb,
+          ${bboxArray}::double precision[],
+          ${objectId},
+          ${featureId},
+          ${gridcode},
+          ${shapeLeng},
+          ${shapeArea},
+          ${soilType},
+          ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
+          NOW(),
+          NOW()
+        ) RETURNING *;
+      `;
+    });
+
+    const createdSoils = await prisma.$transaction(soilPromises);
 
     res.status(201).json({
       message: 'Soil data created',
@@ -65,7 +109,9 @@ const createSoils = async (req, res) => {
       .json({ message: 'Failed to create soil data', error: error.message });
   }
 };
-
+/**
+ * Update a Soil by ID
+ */
 const updateSoil = async (req, res) => {
   const { id } = req.params;
   const { name, description, geojson } = req.body;
@@ -84,57 +130,72 @@ const updateSoil = async (req, res) => {
       return res.status(400).json({ message: 'Invalid GeoJSON format' });
     }
 
-    const updatedSoil = await prisma.soil.update({
-      where: { id: Number(id) },
-      data: {
-        name,
-        description,
-        geom: parsedGeojson.features[0].geometry,
-        properties: parsedGeojson.features[0].properties,
-      },
-    });
-    res.json(updatedSoil);
+    const feature = parsedGeojson.features[0];
+    const { geometry, properties } = feature;
+
+    const bboxArray = geometry.bbox ? `{${geometry.bbox.join(',')}}` : 'NULL';
+
+    const updatedSoil = await prisma.$executeRaw`
+      UPDATE "Soil"
+      SET
+        "name" = ${name},
+        "description" = ${description},
+        "geom" = ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(
+          geometry
+        )}), 4326),
+        "bbox" = ${bboxArray}::double precision[],
+        "properties" = ${JSON.stringify(properties)}::jsonb,
+        "updatedAt" = NOW()
+      WHERE "id" = ${Number(id)}
+      RETURNING *;
+    `;
+
+    if (updatedSoil.length === 0) {
+      return res.status(404).json({ message: 'Soil not found' });
+    }
+
+    res.json(updatedSoil[0]);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Failed to update soil data' });
   }
 };
 
+/**
+ * Delete a Soil by ID
+ */
 const deleteSoil = async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.soil.delete({ where: { id: Number(id) } });
-    res.json({ message: 'Soil deleted' });
+    const deleted = await prisma.soil.delete({ where: { id: Number(id) } });
+    res.json({ message: 'Soil deleted', deleted });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Failed to delete soil' });
   }
 };
+
+/**
+ * Delete all Soils
+ */
 const deleteAllSoils = async (req, res) => {
   try {
-    const countBefore = await prisma.soil.count();
-    console.log(`Soil records count before delete: ${countBefore}`);
-
     const deletedCount = await prisma.soil.deleteMany();
-
-    const countAfter = await prisma.soil.count();
-    console.log(`Soil records count after delete: ${countAfter}`);
-    console.log(`Deleted ${deletedCount.count} soil records`);
-
     res.status(200).json({
       success: true,
-      message: `Deleted ${deletedCount.count} soil records`,
+      message: 'Soils cleared successfully',
       count: deletedCount.count,
     });
   } catch (error) {
-    console.error('Error deleting all soils:', error);
+    console.error(error);
     res.status(500).json({
       success: false,
-      message: 'Failed to delete all soils',
+      message: 'Failed to clear soils',
       error: error.message,
     });
   }
 };
+
 module.exports = {
   getSoils,
   getSoil,
