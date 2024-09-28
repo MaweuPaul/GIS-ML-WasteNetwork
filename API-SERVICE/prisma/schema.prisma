@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -16,107 +10,149 @@ datasource db {
 }
 
 model AreaOfInterest {
-  id           Int      @id @default(autoincrement())
-  type         String   // "Feature"
-  name         String?  // Optional, can be derived from properties.NAME_2
-
-  // Geometry
-  geometryType String   // "Polygon"
-  coordinates  Json     // Store the coordinates array as JSON
-  bbox         Float[]  // Bounding box
-
-  // Properties
-  objectId     Int
-  iso          String
-  country      String   // NAME_0 in the original JSON
-  provinceId   Int      // ID_1 in the original JSON
-  provinceName String   // NAME_1 in the original JSON
-  districtId   Int      // ID_2 in the original JSON
-  districtName String   // NAME_2 in the original JSON
-  ccn          Int      // CCN_2 in the original JSON
-  type2        String   // TYPE_2 in the original JSON
-  engType      String   // ENGTYPE_2 in the original JSON
-  shapeLeng    Float
-  shapeArea    Float
+  id           Int                      @id @default(autoincrement())
+  name         String?
+  properties   Json
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
   area         Float
-
-  // Additional fields
-  properties   Json     // Store any additional properties as JSON
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  bbox         Float[]
+  ccn          Int
+  coordinates  Json
+  country      String
+  districtId   Int
+  districtName String
+  engType      String
+  geometryType String
+  iso          String
+  objectId     Int
+  provinceId   Int
+  provinceName String
+  shapeArea    Float
+  shapeLeng    Float
+  type         String
+  type2        String
+  geom         Unsupported("geometry")?
 
   @@index([geometryType, bbox])
 }
 
 model Soil {
-  id           Int      @id @default(autoincrement())
-  type         String   // "Feature"
-  name         String?  // 
-  // Geometry
-  geometryType String   // "Polygon"
-  coordinates  Json     // Store the coordinates array as JSON
-  bbox         Float[]  // Bounding box
-
-  // Properties
-  objectId     Int
+  id           Int                      @id @default(autoincrement())
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  bbox         Float[]
+  coordinates  Json
+  geometryType String
+  type         String
+  name         String?
   featureId    Int
   gridcode     Int
-  shapeLeng    Float
+  objectId     Int
   shapeArea    Float
+  shapeLeng    Float
   soilType     String
-
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  geom         Unsupported("geometry")?
 }
+
 model DigitalElevationModel {
-  id           Int      @id @default(autoincrement())
+  id           Int                      @id @default(autoincrement())
   name         String
-  bbox         Float[]  // Bounding box
-  coordinates  Json     // Store the coordinates array as JSON
-  geometryType String   // "Polygon" in this case
-  elevation    Int      // This will store the gridcode/elevation value
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  elevation    Int
+  geometryType String
+  geom         Unsupported("geometry")?
+  bbox         Float[]
+  coordinates  Json
+
 }
 
 model Geology {
-  id          Int      @id @default(autoincrement())
+  id          Int                      @id @default(autoincrement())
   name        String
   description String?
-  geom        Unsupported("geometry(Geometry, 4326)")
+  geom        Unsupported("geometry")?
   properties  Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@index([geom])
 }
 
 model ProtectedArea {
-  id          Int      @id @default(autoincrement())
-  name        String   // This will store the "AREANAME" from properties
-  type        String   // This will store the geometry type (e.g., "MultiPolygon", "Polygon")
-  coordinates Json     // This will store the coordinates array
-  bbox        Float[]  // This will store the bounding box
-  properties  Json     // This will store all other properties
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id          Int                      @id @default(autoincrement())
+  name        String
+  type        String
+  coordinates Json
+  bbox        Float[]
+  properties  Json
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  geom        Unsupported("geometry")?
+
+  
 }
 
 model Road {
-  id          Int      @id @default(autoincrement())
+  id          Int                      @id @default(autoincrement())
   name        String?
-  type        String   // e.g., "LineString"
-  coordinates Json     // Store coordinates as a JSON array
-  properties  Json     // Store properties as a JSON object
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  properties  Json
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  coordinates Json
+  type        String
+  bbox        Float[]
+  geom        Unsupported("geometry")?
+
+  @@index([geom])
 }
 
 model River {
-  id          Int       @id @default(autoincrement())
+  id          Int                      @id @default(autoincrement())
   name        String
-  type        String    // e.g., "MultiLineString"
-  coordinates Json      // Store coordinates as a JSON array
-  bbox        Float[]   // Store bounding box as an array of floats
-  properties  Json      // Store properties as a JSON object
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  properties  Json
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  bbox        Float[]
+  coordinates Json
+  type        String
+  geom        Unsupported("geometry")?
+
+  @@index([geom])
+}
+
+model Settlement {
+  id         Int                      @id @default(autoincrement())
+  name       String
+  population Int?
+  bbox       Float[]
+  geom       Unsupported("geometry")?
+  properties Json
+  createdAt  DateTime                 @default(now())
+  updatedAt  DateTime                 @updatedAt
+
+  @@index([geom])
+}
+
+model LandUse {
+  id         Int                      @id @default(autoincrement())
+  useType    String
+  areaSqKm   Float
+  bbox       Float[]
+  geom       Unsupported("geometry")?
+  properties Json
+  createdAt  DateTime                 @default(now())
+  updatedAt  DateTime                 @updatedAt
+
+  @@index([geom])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model spatial_ref_sys {
+  srid      Int     @id
+  auth_name String? @db.VarChar(256)
+  auth_srid Int?
+  srtext    String? @db.VarChar(2048)
+  proj4text String? @db.VarChar(2048)
 }
