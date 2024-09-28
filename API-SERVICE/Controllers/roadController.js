@@ -1,51 +1,100 @@
 const prisma = require('../Lib/prisma.js');
-const fs = require('fs').promises;
-const path = require('path');
 const dotenv = require('dotenv');
 dotenv.config();
 
+/**
+ * Fetch all Roads
+ */
 const getRoads = async (req, res) => {
   try {
     const roads = await prisma.road.findMany();
     res.json(roads);
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching roads:', error);
     res.status(500).json({ message: 'Failed to fetch roads' });
   }
 };
 
+/**
+ * Fetch a single Road by ID
+ */
 const getRoad = async (req, res) => {
   const { id } = req.params;
   try {
     const road = await prisma.road.findUnique({ where: { id: Number(id) } });
+    if (!road) {
+      return res.status(404).json({ message: 'Road not found' });
+    }
     res.json(road);
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching road:', error);
     res.status(500).json({ message: 'Failed to fetch road' });
   }
 };
 
+/**
+ * Create multiple Roads from GeoJSON
+ */
 const createRoad = async (req, res) => {
   const { geojson } = req.body;
 
-  try {
-    const createdRoads = await Promise.all(
-      geojson.features.map(async (feature) => {
-        const { type, coordinates } = feature.geometry;
-        const { name, ...otherProperties } = feature.properties;
+  if (!geojson || !geojson.features || !Array.isArray(geojson.features)) {
+    return res.status(400).json({ message: 'Invalid GeoJSON data' });
+  }
 
-        return await prisma.road.create({
-          data: {
-            name: name || 'Unnamed Road',
-            type: type,
-            coordinates: coordinates,
-            properties: otherProperties,
-          },
-        });
-      })
+  try {
+    const createdRoads = await prisma.$transaction(
+      geojson.features
+        .map((feature) => {
+          let { type, coordinates, bbox } = feature.geometry;
+          const { name, ...otherProperties } = feature.properties;
+
+          // Convert MultiLineString to LineString if it contains only one line
+          if (type === 'MultiLineString' && coordinates.length === 1) {
+            type = 'LineString';
+            coordinates = coordinates[0];
+          }
+
+          // Skip if the geometry type is not LineString
+          if (type !== 'LineString') {
+            return null;
+          }
+
+          const bboxArray = bbox ? `{${bbox.join(',')}}` : 'NULL';
+
+          return prisma.$executeRaw`
+          INSERT INTO "Road" (
+            "name",
+            "type",
+            "coordinates",
+            "bbox",
+            "geom",
+            "properties",
+            "createdAt",
+            "updatedAt"
+          ) VALUES (
+            ${name || 'Unnamed Road'},
+            ${type},
+            ${JSON.stringify(coordinates)}::jsonb,
+            ${bboxArray}::double precision[],
+            ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify({
+              type,
+              coordinates,
+            })}), 4326),
+            ${JSON.stringify(otherProperties)}::jsonb,
+            NOW(),
+            NOW()
+          ) RETURNING *;
+        `;
+        })
+        .filter(Boolean) // Filter out null values
     );
 
-    res.status(201).json({ message: 'Roads created', createdRoads });
+    res.status(201).json({
+      message: 'Roads created',
+      count: createdRoads.length,
+      roads: createdRoads,
+    });
   } catch (error) {
     console.error('Error creating roads:', error);
     res
@@ -54,55 +103,86 @@ const createRoad = async (req, res) => {
   }
 };
 
+/**
+ * Update a Road
+ */
 const updateRoad = async (req, res) => {
   const { id } = req.params;
   const { name, description, geometry } = req.body;
   try {
-    const updatedRoad = await prisma.road.update({
-      where: { id: Number(id) },
-      data: {
-        name,
-        description,
-        geom: JSON.parse(geometry),
-      },
-    });
-    res.json(updatedRoad);
+    const { type, coordinates, bbox } = geometry;
+
+    if (type !== 'LineString') {
+      throw new Error('Invalid geometry type. Expected LineString.');
+    }
+
+    const bboxArray = bbox ? `{${bbox.join(',')}}` : 'NULL';
+
+    const updatedRoad = await prisma.$executeRaw`
+      UPDATE "Road"
+      SET
+        "name" = ${name},
+        "description" = ${description},
+        "geom" = ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(
+          geometry
+        )}), 4326),
+        "bbox" = ${bboxArray}::double precision[],
+        "updatedAt" = NOW()
+      WHERE "id" = ${Number(id)}
+      RETURNING *;
+    `;
+
+    if (updatedRoad.length === 0) {
+      return res.status(404).json({ message: 'Road not found' });
+    }
+
+    res.json(updatedRoad[0]);
   } catch (error) {
-    console.error(error);
+    console.error('Error updating road:', error);
     res.status(500).json({ message: 'Failed to update road data' });
   }
 };
 
+/**
+ * Delete a Road
+ */
 const deleteRoad = async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.road.delete({ where: { id: Number(id) } });
-    res.json({ message: 'Road deleted' });
+    const deletedRoad = await prisma.road.delete({ where: { id: Number(id) } });
+    res.json({ message: 'Road deleted', deletedRoad });
   } catch (error) {
-    console.error(error);
+    console.error('Error deleting road:', error);
     res.status(500).json({ message: 'Failed to delete road' });
   }
 };
 
+/**
+ * Delete all Roads
+ */
 const deleteAllRoads = async (req, res) => {
   try {
     const deletedCount = await prisma.road.deleteMany();
     res.status(200).json({
+      success: true,
       message: `Deleted ${deletedCount.count} roads`,
       count: deletedCount.count,
     });
   } catch (error) {
     console.error('Error deleting all roads:', error);
-    res
-      .status(500)
-      .json({ message: 'Failed to delete all roads', error: error.message });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all roads',
+      error: error.message,
+    });
   }
 };
+
 module.exports = {
   getRoads,
   getRoad,
   createRoad,
   updateRoad,
-  deleteRoad,
   deleteAllRoads,
+  deleteRoad,
 };
