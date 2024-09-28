@@ -1,10 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import axios from 'axios';
 import { useDropzone } from 'react-dropzone';
-import Navbar from '../components/navbar';
-import ResultsPage from '../PAGES/resultsPage';
+import Navbar from '../components/Navbar';
+import ResultsPage from '../pages/ResultsPage';
 import shp from 'shpjs';
-import MapVisualization from '../components/mapVisualizer';
+import MapVisualization from '../components/MapVisualizer';
 
 const dataTypes = [
   { key: 'area-of-interest', label: 'Area of Interest Shapefile' },
@@ -80,7 +80,12 @@ const DataTypeSection = ({
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: undefined,
+    accept: {
+      'application/x-shapefile': ['.shp'],
+      'application/octet-stream': ['.dbf'],
+      'application/json': ['.prj'],
+      'application/x-cpg': ['.cpg'],
+    },
     multiple: true,
   });
 
@@ -149,7 +154,7 @@ const Sidebar = ({ activeSection, setActiveSection, data }) => {
   };
 
   return (
-    <nav className="w-64 bg-gray-100 h-screen fixed left-0 top-16 p-4">
+    <nav className="w-64 bg-gray-100 h-screen fixed left-0 top-16 p-4 overflow-auto">
       <h2 className="text-xl font-bold mb-4 text-gray-800">Data Types</h2>
       <ul>
         {dataTypes.map((type) => (
@@ -196,7 +201,7 @@ const UploadPage = () => {
     const section = data[dataTypeKey];
     if (!section.name || !section.geojson) {
       setMessage(
-        `Please complete all fields for ${dataTypeKey} before uploading.`
+        `Please complete all fields for ${section.label} before uploading.`
       );
       return;
     }
@@ -206,144 +211,166 @@ const UploadPage = () => {
 
     let payload = {};
 
-    if (dataTypeKey === 'digitalElevationModel') {
-      const features = Array.isArray(section.geojson.features)
-        ? section.geojson.features
-        : [section.geojson];
+    try {
+      switch (dataTypeKey) {
+        case 'digitalElevationModel':
+          await uploadDEM(section);
+          break;
 
-      const modifiedFeatures = features.map((feature) => ({
+        case 'soils':
+          await uploadSoils(section);
+          break;
+
+        case 'area-of-interest':
+          await uploadAreaOfInterest(section);
+          break;
+
+        // Add cases for other data types as needed
+
+        default:
+          await uploadGeneric(dataTypeKey, section);
+      }
+
+      setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
+      setMessage(`${dataTypeKey} data uploaded successfully!`);
+    } catch (error) {
+      console.error('Upload error:', error);
+      setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
+    } finally {
+      setIsUploading(false);
+      // Optionally, navigate to results or next section
+      const currentIndex = dataTypes.findIndex(
+        (type) => type.key === dataTypeKey
+      );
+      if (currentIndex < dataTypes.length - 1) {
+        setActiveSection(dataTypes[currentIndex + 1].key);
+      }
+    }
+  };
+
+  const uploadDEM = async (section) => {
+    const features = Array.isArray(section.geojson.features)
+      ? section.geojson.features
+      : [section.geojson];
+
+    const modifiedFeatures = features.map((feature) => {
+      return {
         name: section.name,
         bbox: feature.geometry.bbox || [],
-        coordinates: feature.geometry.coordinates,
         geometryType: feature.geometry.type,
+        geometry: feature.geometry,
+        coordinates: feature.geometry.coordinates,
         elevation: feature.properties.gridcode,
-      }));
+      };
+    });
 
-      const chunkSize = 10;
-      const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
+    const chunkSize = 10;
+    const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
 
-      for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
-        const chunk = modifiedFeatures.slice(i, i + chunkSize);
-        payload = { features: chunk };
+    for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
+      const chunk = modifiedFeatures.slice(i, i + chunkSize);
+      const payload = { features: chunk };
 
-        try {
-          setMessage(
-            `Sending chunk ${
-              Math.floor(i / chunkSize) + 1
-            } of ${totalChunks}...`
-          );
-          const response = await axios.post(
-            'http://localhost:3000/api/digital-elevation-models',
-            payload,
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-          console.log(
-            `Chunk ${Math.floor(i / chunkSize) + 1} response:`,
-            response.data
-          );
-        } catch (error) {
-          console.error('Upload error:', error);
-          setMessage(
-            `Error uploading chunk ${Math.floor(i / chunkSize) + 1}: ${
-              error.message
-            }`
-          );
-          setIsUploading(false);
-          return;
-        }
-      }
-
-      setMessage('DEM data uploaded successfully!');
-      setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
-    } else {
-      // Handle other data types as before
-      if (dataTypeKey === 'area-of-interest') {
-        const feature =
-          section.geojson.type === 'Feature'
-            ? section.geojson
-            : section.geojson.features[0];
-        payload = {
-          feature: {
-            type: feature.type,
-            geometry: {
-              type: feature.geometry.type,
-              coordinates: feature.geometry.coordinates,
-              bbox: feature.geometry.bbox,
-            },
-            properties: {
-              ...feature.properties,
-              NAME_2: section.name,
-            },
-          },
-        };
-      } else if (dataTypeKey === 'soils') {
-        const features = Array.isArray(section.geojson.features)
-          ? section.geojson.features
-          : [section.geojson];
-        const modifiedFeatures = features.map((feature) => ({
-          type: feature.type,
-          geometry: {
-            type: feature.geometry.type,
-            coordinates: feature.geometry.coordinates,
-            bbox: feature.geometry.bbox,
-          },
-          properties: {
-            objectId:
-              feature.properties.OBJECTID || feature.properties.objectId,
-            featureId: feature.properties.Id || feature.properties.featureId,
-            gridcode: feature.properties.gridcode,
-            shapeLeng:
-              feature.properties.Shape_Leng || feature.properties.shapeLeng,
-            shapeArea:
-              feature.properties.Shape_Area || feature.properties.shapeArea,
-            soilType:
-              feature.properties.soil_type || feature.properties.soilType,
-          },
-        }));
-        payload = { features: modifiedFeatures };
-      } else {
-        payload = {
-          name: section.name,
-          geojson: section.geojson,
-        };
-      }
-
-      let url = `http://localhost:3000/api/${dataTypeKey}`;
-      console.log('Uploading data type:', dataTypeKey);
-      console.log('Payload:', JSON.stringify(payload, null, 2));
-
-      try {
-        setMessage('Sending request to server...');
-        const response = await axios.post(url, payload, {
+      setMessage(
+        `Sending chunk ${Math.floor(i / chunkSize) + 1} of ${totalChunks}...`
+      );
+      const response = await axios.post(
+        'http://localhost:3000/api/digital-elevation-models',
+        payload,
+        {
           headers: { 'Content-Type': 'application/json' },
-        });
-        console.log('Server response:', response.data);
-        setMessage(`${dataTypeKey} data uploaded successfully!`);
-        setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
-      } catch (error) {
-        console.error('Upload error:', error);
-        if (error.response) {
-          console.error('Error response:', error.response.data);
-        } else if (error.request) {
-          console.error('No response received:', error.request);
-        } else {
-          console.error('Error setting up request:', error.message);
         }
-        setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
+      );
+      console.log(
+        `Chunk ${Math.floor(i / chunkSize) + 1} response:`,
+        response.data
+      );
+    }
+
+    setMessage('DEM data uploaded successfully!');
+  };
+
+  const uploadSoils = async (section) => {
+    const features = Array.isArray(section.geojson.features)
+      ? section.geojson.features
+      : [section.geojson];
+    const modifiedFeatures = features.map((feature) => ({
+      type: feature.type,
+      geometry: {
+        type: feature.geometry.type,
+        coordinates: feature.geometry.coordinates,
+        bbox: feature.geometry.bbox,
+      },
+      properties: {
+        objectId: feature.properties.OBJECTID || feature.properties.objectId,
+        featureId: feature.properties.Id || feature.properties.featureId,
+        gridcode: feature.properties.gridcode,
+        shapeLeng:
+          feature.properties.Shape_Leng || feature.properties.shapeLeng,
+        shapeArea:
+          feature.properties.Shape_Area || feature.properties.shapeArea,
+        soilType: feature.properties.soil_type || feature.properties.soilType,
+      },
+    }));
+    const payload = { features: modifiedFeatures };
+
+    setMessage('Uploading Soils data...');
+    const response = await axios.post(
+      'http://localhost:3000/api/soils',
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
       }
-    }
-
-    // Move to the next section
-    const currentIndex = dataTypes.findIndex(
-      (type) => type.key === dataTypeKey
     );
-    if (currentIndex < dataTypes.length - 1) {
-      setActiveSection(dataTypes[currentIndex + 1].key);
-    }
+    console.log('Soils upload response:', response.data);
+  };
 
-    setIsUploading(false);
+  const uploadAreaOfInterest = async (section) => {
+    const feature =
+      section.geojson.type === 'Feature'
+        ? section.geojson
+        : section.geojson.features[0];
+
+    const payload = {
+      feature: {
+        type: feature.type,
+        geometry: {
+          type: feature.geometry.type,
+          coordinates: feature.geometry.coordinates,
+          bbox: feature.geometry.bbox,
+        },
+        properties: {
+          ...feature.properties,
+          NAME_2: section.name,
+        },
+      },
+    };
+
+    setMessage('Uploading Area of Interest...');
+    const response = await axios.post(
+      'http://localhost:3000/api/area-of-interest',
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+    console.log('Area of Interest upload response:', response.data);
+  };
+
+  const uploadGeneric = async (dataTypeKey, section) => {
+    const payload = {
+      name: section.name,
+      geojson: section.geojson,
+    };
+
+    const url = `http://localhost:3000/api/${dataTypeKey}`;
+    console.log('Uploading data type:', dataTypeKey);
+    console.log('Payload:', JSON.stringify(payload, null, 2));
+
+    const response = await axios.post(url, payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    console.log('Server response:', response.data);
   };
 
   const handleCleanDatabase = async () => {
@@ -367,6 +394,9 @@ const UploadPage = () => {
         'soils',
         'area-of-interest',
         'digital-elevation-models',
+        'roads',
+        'geology',
+        'land-use',
       ];
 
       const responses = await Promise.all(
@@ -476,7 +506,7 @@ const UploadPage = () => {
               ))}
               {message && (
                 <p
-                  className={`mt-4 text-lg ${
+                  className={`mt-4 text-lg whitespace-pre-wrap ${
                     message.includes('successfully') ||
                     message.includes('deleted')
                       ? 'text-green-600'
