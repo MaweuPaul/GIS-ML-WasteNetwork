@@ -6,7 +6,7 @@ const {
   getRoads,
   updateRoad,
   deleteAllRoads,
-} = require('../controllers/roadController');
+} = require('../Controllers/roadController');
 
 const router = express.Router();
 
@@ -18,8 +18,8 @@ router.get('/', getRoads);
 router.get('/:id', getRoad);
 router.post('/', createRoad);
 router.put('/:id', updateRoad);
-router.delete('/:id', deleteRoad);
 router.delete('/deleteAll', deleteAllRoads);
+router.delete('/:id', deleteRoad);
 
 // Error handling middleware
 router.use((error, req, res, next) => {
