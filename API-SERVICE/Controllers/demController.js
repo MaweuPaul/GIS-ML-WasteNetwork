@@ -1,10 +1,10 @@
 const prisma = require('../Lib/prisma.js');
-const fs = require('fs').promises;
-const path = require('path');
 const dotenv = require('dotenv');
-const { count } = require('console');
 dotenv.config();
 
+/**
+ * Fetch all Digital Elevation Models
+ */
 const getDigitalElevationModels = async (req, res) => {
   try {
     const digitalElevationModels =
@@ -18,12 +18,22 @@ const getDigitalElevationModels = async (req, res) => {
   }
 };
 
+/**
+ * Fetch a single Digital Elevation Model by ID
+ */
 const getDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
   try {
     const digitalElevationModel = await prisma.digitalElevationModel.findUnique(
-      { where: { id: Number(id) } }
+      {
+        where: { id: Number(id) },
+      }
     );
+    if (!digitalElevationModel) {
+      return res
+        .status(404)
+        .json({ message: 'Digital elevation model not found' });
+    }
     res.json(digitalElevationModel);
   } catch (error) {
     console.error(error);
@@ -33,6 +43,9 @@ const getDigitalElevationModel = async (req, res) => {
   }
 };
 
+/**
+ * Create multiple Digital Elevation Models
+ */
 const createDigitalElevationModel = async (req, res) => {
   const { features } = req.body;
 
@@ -44,17 +57,38 @@ const createDigitalElevationModel = async (req, res) => {
 
   try {
     const createdModels = await prisma.$transaction(
-      features.map((feature) =>
-        prisma.digitalElevationModel.create({
-          data: {
-            name: feature.name,
-            bbox: feature.bbox,
-            coordinates: feature.coordinates, // Prisma will automatically handle JSON serialization
-            geometryType: feature.geometryType,
-            elevation: feature.elevation,
-          },
-        })
-      )
+      features.map((feature) => {
+        const { name, bbox, geometryType, coordinates, elevation } = feature;
+        let { geometry } = feature;
+
+        // Ensure geometry is not null
+        if (!geometry) {
+          throw new Error('Geometry is required');
+        }
+
+        // Use Prisma's executeRaw to handle geom field with PostGIS
+        return prisma.$executeRaw`
+          INSERT INTO "DigitalElevationModel" (
+            "name",
+            "bbox",
+            "coordinates",
+            "geometryType",
+            "elevation",
+            "geom",
+            "createdAt",
+            "updatedAt"
+          ) VALUES (
+            ${name},
+            ${bbox ? `{${bbox.join(',')}}` : null}::double precision[],
+            ${JSON.stringify(coordinates)}::jsonb,
+            ${geometry.type},
+            ${elevation},
+            ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
+            NOW(),
+            NOW()
+          ) RETURNING *;
+        `;
+      })
     );
 
     res.status(201).json({
@@ -71,20 +105,33 @@ const createDigitalElevationModel = async (req, res) => {
   }
 };
 
+/**
+ * Update a Digital Elevation Model by ID
+ */
 const updateDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
   const { name, description, geometry } = req.body;
   try {
-    const updatedDigitalElevationModel =
-      await prisma.digitalElevationModel.update({
-        where: { id: Number(id) },
-        data: {
-          name,
-          description,
-          geom: JSON.parse(geometry),
-        },
-      });
-    res.json(updatedDigitalElevationModel);
+    const updatedDigitalElevationModel = await prisma.$executeRaw`
+      UPDATE "DigitalElevationModel"
+      SET 
+        "name" = ${name},
+        "description" = ${description},
+        "geom" = ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(
+          geometry
+        )}), 4326),
+        "updatedAt" = NOW()
+      WHERE id = ${Number(id)}
+      RETURNING *;
+    `;
+
+    if (updatedDigitalElevationModel.length === 0) {
+      return res
+        .status(404)
+        .json({ message: 'Digital elevation model not found' });
+    }
+
+    res.json(updatedDigitalElevationModel[0]);
   } catch (error) {
     console.error(error);
     res
@@ -93,11 +140,16 @@ const updateDigitalElevationModel = async (req, res) => {
   }
 };
 
+/**
+ * Delete a Digital Elevation Model by ID
+ */
 const deleteDigitalElevationModel = async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.digitalElevationModel.delete({ where: { id: Number(id) } });
-    res.json({ message: 'Digital elevation model deleted' });
+    const deleted = await prisma.digitalElevationModel.delete({
+      where: { id: Number(id) },
+    });
+    res.json({ message: 'Digital elevation model deleted', deleted });
   } catch (error) {
     console.error(error);
     res
@@ -106,18 +158,22 @@ const deleteDigitalElevationModel = async (req, res) => {
   }
 };
 
-const deleteAllDigitalElevationModel = async (req, res) => {
+/**
+ * Delete all Digital Elevation Models
+ */
+const deleteAllDigitalElevationModels = async (req, res) => {
   try {
-    const result = await prisma.digitalElevationModel.deleteMany();
+    const deletedCount = await prisma.digitalElevationModel.deleteMany();
     res.status(200).json({
       success: true,
-      message: 'Digital elevation cleared successfully',
-      count: result.count,
+      message: 'Digital elevation models cleared successfully',
+      count: deletedCount.count,
     });
   } catch (error) {
-    res.status(400).json({
+    console.error(error);
+    res.status(500).json({
       success: false,
-      message: 'Digital elevation could not be cleared',
+      message: 'Failed to clear digital elevation models',
       error: error.message,
     });
   }
@@ -128,6 +184,6 @@ module.exports = {
   getDigitalElevationModel,
   createDigitalElevationModel,
   updateDigitalElevationModel,
-  deleteAllDigitalElevationModel,
   deleteDigitalElevationModel,
+  deleteAllDigitalElevationModels,
 };
