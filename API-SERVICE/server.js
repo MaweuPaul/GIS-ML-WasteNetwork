@@ -7,6 +7,7 @@ const riverRoutes = require('./Routes/riverRoutes.js');
 const roadRoutes = require('./Routes/roadRoutes.js');
 const digitalElevationModelRoutes = require('./Routes/demRoute.js');
 const areaOfInterestRoutes = require('./Routes/aoiroute.js');
+const landuseRasterRoute = require('./Routes/landuseRoute.js');
 const databaseRoutes = require('./Routes/databaseRoutes.js');
 const dataRoutes = require('./Routes/dataRoutes.js');
 
@@ -27,6 +28,7 @@ app.use('/api/rivers', riverRoutes);
 app.use('/api/roads', roadRoutes);
 app.use('/api/digital-elevation-models', digitalElevationModelRoutes);
 app.use('/api/area-of-interest', areaOfInterestRoutes);
+app.use('/api/land-use-raster', landuseRasterRoute);
 app.use('/api/database', databaseRoutes);
 app.use('/api/data', dataRoutes);
 

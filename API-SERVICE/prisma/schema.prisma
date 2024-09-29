@@ -135,18 +135,13 @@ model Settlement {
   @@index([geom])
 }
 
-model LandUse {
-  id         Int                      @id @default(autoincrement())
-  useType    String
-  areaSqKm   Float
-  bbox       Float[]
-  geom       Unsupported("geometry")?
-  properties Json
-  createdAt  DateTime                 @default(now())
-  updatedAt  DateTime                 @updatedAt
-
-  @@index([geom])
-}
+   model LandUseRaster {
+     id          Int      @id @default(autoincrement())
+     description String
+     raster      Bytes
+     createdAt   DateTime @default(now())
+     updatedAt   DateTime @updatedAt
+   }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model spatial_ref_sys {
