@@ -14,6 +14,8 @@ const dataTypes = [
   { key: 'protected-areas', label: 'Protected Areas' },
   { key: 'rivers', label: 'Rivers' },
   { key: 'roads', label: 'Roads' },
+  { key: 'settlement', label: 'Settlement' },
+  { key: 'land-use-raster', label: 'Land Use ' },
 ];
 
 const DataTypeSection = ({
@@ -28,51 +30,66 @@ const DataTypeSection = ({
   const onDrop = useCallback(
     async (acceptedFiles) => {
       try {
-        const filesObject = {};
-        const requiredExtensions = ['shp', 'dbf', 'prj'];
-        const optionalExtensions = ['cpg'];
-        const missingRequired = [];
-
-        for (const file of acceptedFiles) {
-          const extension = file.name.split('.').pop().toLowerCase();
-          if (
-            [...requiredExtensions, ...optionalExtensions].includes(extension)
-          ) {
-            filesObject[extension] = await file.arrayBuffer();
+        if (dataType.key === 'land-use-raster') {
+          // Handle raster file upload
+          const file = acceptedFiles[0];
+          if (file) {
+            setData((prevData) => ({
+              ...prevData,
+              [dataType.key]: {
+                ...prevData[dataType.key],
+                file: file,
+              },
+            }));
           }
-        }
+        } else {
+          // Existing vector file handling
+          const filesObject = {};
+          const requiredExtensions = ['shp', 'dbf', 'prj'];
+          const optionalExtensions = ['cpg'];
+          const missingRequired = [];
 
-        for (const ext of requiredExtensions) {
-          if (!filesObject[ext]) {
-            missingRequired.push(ext.toUpperCase());
+          for (const file of acceptedFiles) {
+            const extension = file.name.split('.').pop().toLowerCase();
+            if (
+              [...requiredExtensions, ...optionalExtensions].includes(extension)
+            ) {
+              filesObject[extension] = await file.arrayBuffer();
+            }
           }
+
+          for (const ext of requiredExtensions) {
+            if (!filesObject[ext]) {
+              missingRequired.push(ext.toUpperCase());
+            }
+          }
+
+          if (missingRequired.length > 0) {
+            throw new Error(
+              `Missing required files: ${missingRequired.join(', ')}`
+            );
+          }
+
+          const geojson = await shp(filesObject);
+          console.log('Converted GeoJSON:', geojson);
+
+          setData((prevData) => ({
+            ...prevData,
+            [dataType.key]: {
+              ...prevData[dataType.key],
+              files: acceptedFiles,
+              geojson: geojson,
+            },
+          }));
+
+          setAllGeoJsonData((prevData) => ({
+            ...prevData,
+            features: [...prevData.features, ...geojson.features],
+          }));
         }
-
-        if (missingRequired.length > 0) {
-          throw new Error(
-            `Missing required files: ${missingRequired.join(', ')}`
-          );
-        }
-
-        const geojson = await shp(filesObject);
-        console.log('Converted GeoJSON:', geojson);
-
-        setData((prevData) => ({
-          ...prevData,
-          [dataType.key]: {
-            ...prevData[dataType.key],
-            files: acceptedFiles,
-            geojson: geojson,
-          },
-        }));
-
-        setAllGeoJsonData((prevData) => ({
-          ...prevData,
-          features: [...prevData.features, ...geojson.features],
-        }));
       } catch (error) {
-        console.error('Error processing shapefile:', error);
-        alert(`Error processing shapefile: ${error.message}`);
+        console.error('Error processing file:', error);
+        alert(`Error processing file: ${error.message}`);
       }
     },
     [dataType.key, setData, setAllGeoJsonData]
@@ -80,54 +97,106 @@ const DataTypeSection = ({
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'application/x-shapefile': ['.shp'],
-      'application/octet-stream': ['.dbf'],
-      'application/json': ['.prj'],
-      'application/x-cpg': ['.cpg'],
-    },
-    multiple: true,
+    accept:
+      dataType.key === 'land-use-raster'
+        ? { 'image/tiff': ['.tif', '.tiff'] }
+        : {
+            'application/x-shapefile': ['.shp'],
+            'application/octet-stream': ['.dbf'],
+            'application/json': ['.prj'],
+            'application/x-cpg': ['.cpg'],
+          },
+    multiple: dataType.key !== 'land-use-raster',
   });
 
   return (
     <div className="mb-12">
       <h2 className="text-2xl font-semibold mb-4">{dataType.label}</h2>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Name:
-        </label>
-        <input
-          type="text"
-          value={data[dataType.key].name}
-          onChange={(e) =>
-            setData((prevData) => ({
-              ...prevData,
-              [dataType.key]: {
-                ...prevData[dataType.key],
-                name: e.target.value,
-              },
-            }))
-          }
-          className="w-full px-3 py-2 border border-gray-300 rounded-md"
-          required
-        />
-      </div>
-      <div
-        {...getRootProps()}
-        className={`mt-4 p-8 border-2 border-dashed rounded-md cursor-pointer ${
-          isDragActive ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'
-        }`}
-      >
-        <input {...getInputProps()} />
-        <p className="text-center text-lg text-gray-600">
-          {data[dataType.key].files
-            ? `${data[dataType.key].files.length} files selected`
-            : `Drag & drop .shp, .dbf, and .prj files here (optional: .cpg), or click to select`}
-        </p>
-      </div>
+      {dataType.key !== 'land-use-raster' ? (
+        <>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Name:
+            </label>
+            <input
+              type="text"
+              value={data[dataType.key].name}
+              onChange={(e) =>
+                setData((prevData) => ({
+                  ...prevData,
+                  [dataType.key]: {
+                    ...prevData[dataType.key],
+                    name: e.target.value,
+                  },
+                }))
+              }
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              required
+            />
+          </div>
+          <div
+            {...getRootProps()}
+            className={`mt-4 p-8 border-2 border-dashed rounded-md cursor-pointer ${
+              isDragActive
+                ? 'border-indigo-600 bg-indigo-50'
+                : 'border-gray-300'
+            }`}
+          >
+            <input {...getInputProps()} />
+            <p className="text-center text-lg text-gray-600">
+              {data[dataType.key].files
+                ? `${data[dataType.key].files.length} files selected`
+                : `Drag & drop .shp, .dbf, and .prj files here (optional: .cpg), or click to select`}
+            </p>
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Description:
+            </label>
+            <input
+              type="text"
+              value={data[dataType.key].description}
+              onChange={(e) =>
+                setData((prevData) => ({
+                  ...prevData,
+                  [dataType.key]: {
+                    ...prevData[dataType.key],
+                    description: e.target.value,
+                  },
+                }))
+              }
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              required
+            />
+          </div>
+          <div
+            {...getRootProps()}
+            className={`mt-4 p-8 border-2 border-dashed rounded-md cursor-pointer ${
+              isDragActive
+                ? 'border-indigo-600 bg-indigo-50'
+                : 'border-gray-300'
+            }`}
+          >
+            <input {...getInputProps()} />
+            <p className="text-center text-lg text-gray-600">
+              {data[dataType.key].file
+                ? `${data[dataType.key].file.name} selected`
+                : `Drag & drop a .tif or .tiff file here, or click to select`}
+            </p>
+          </div>
+        </>
+      )}
       <button
         onClick={() => onUpload(dataType.key)}
-        disabled={isUploading || uploadSuccess}
+        disabled={
+          isUploading ||
+          (dataType.key === 'land-use-raster'
+            ? !data[dataType.key].file
+            : uploadSuccess)
+        }
         className={`mt-4 w-full py-3 px-4 border border-transparent rounded-md text-lg font-medium text-white 
           ${
             isUploading
@@ -149,6 +218,9 @@ const DataTypeSection = ({
 
 const Sidebar = ({ activeSection, setActiveSection, data }) => {
   const isComplete = (type) => {
+    if (type.key === 'land-use-raster') {
+      return data[type.key].file;
+    }
     const section = data[type.key];
     return section.name && section.files;
   };
@@ -182,7 +254,10 @@ const UploadPage = () => {
     dataTypes.reduce(
       (acc, type) => ({
         ...acc,
-        [type.key]: { name: '', files: null, geojson: null },
+        [type.key]:
+          type.key === 'land-use-raster'
+            ? { description: '', file: null }
+            : { name: '', files: null, geojson: null },
       }),
       {}
     )
@@ -199,17 +274,21 @@ const UploadPage = () => {
 
   const handleUpload = async (dataTypeKey) => {
     const section = data[dataTypeKey];
-    if (!section.name || !section.geojson) {
+    if (
+      (dataTypeKey !== 'land-use-raster' &&
+        (!section.name || !section.geojson)) ||
+      (dataTypeKey === 'land-use-raster' && !section.file)
+    ) {
       setMessage(
-        `Please complete all fields for ${section.label} before uploading.`
+        `Please complete all fields for ${
+          dataTypeKey === 'land-use-raster' ? 'Land Use Raster' : section.label
+        } before uploading.`
       );
       return;
     }
 
     setIsUploading(true);
     setMessage('Preparing upload...');
-
-    let payload = {};
 
     try {
       switch (dataTypeKey) {
@@ -225,7 +304,17 @@ const UploadPage = () => {
           await uploadAreaOfInterest(section);
           break;
 
-        // Add cases for other data types as needed
+        case 'land-use':
+          await uploadLandUse(section);
+          break;
+
+        case 'settlement':
+          await uploadSettlement(section);
+          break;
+
+        case 'land-use-raster':
+          await uploadLandUseRaster(section);
+          break;
 
         default:
           await uploadGeneric(dataTypeKey, section);
@@ -238,7 +327,6 @@ const UploadPage = () => {
       setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
     } finally {
       setIsUploading(false);
-      // Optionally, navigate to results or next section
       const currentIndex = dataTypes.findIndex(
         (type) => type.key === dataTypeKey
       );
@@ -357,6 +445,87 @@ const UploadPage = () => {
     console.log('Area of Interest upload response:', response.data);
   };
 
+  const uploadLandUse = async (section) => {
+    const features = Array.isArray(section.geojson.features)
+      ? section.geojson.features
+      : [section.geojson];
+    const modifiedFeatures = features.map((feature) => ({
+      type: feature.type,
+      geometry: {
+        type: feature.geometry.type,
+        coordinates: feature.geometry.coordinates,
+        bbox: feature.geometry.bbox,
+      },
+      properties: {
+        ...feature.properties,
+        landUseType:
+          feature.properties.land_use_type || feature.properties.landUseType,
+      },
+    }));
+    const payload = { features: modifiedFeatures };
+
+    setMessage('Uploading Land Use data...');
+    const response = await axios.post(
+      'http://localhost:3000/api/land-use',
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+    console.log('Land Use upload response:', response.data);
+  };
+
+  const uploadSettlement = async (section) => {
+    const features = Array.isArray(section.geojson.features)
+      ? section.geojson.features
+      : [section.geojson];
+    const modifiedFeatures = features.map((feature) => ({
+      type: feature.type,
+      geometry: {
+        type: feature.geometry.type,
+        coordinates: feature.geometry.coordinates,
+        bbox: feature.geometry.bbox,
+      },
+      properties: {
+        ...feature.properties,
+        settlementName:
+          feature.properties.settlement_name ||
+          feature.properties.settlementName,
+        population: feature.properties.population,
+      },
+    }));
+    const payload = { features: modifiedFeatures };
+
+    setMessage('Uploading Settlement data...');
+    const response = await axios.post(
+      'http://localhost:3000/api/settlement',
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+    console.log('Settlement upload response:', response.data);
+  };
+
+  const uploadLandUseRaster = async (section) => {
+    const formData = new FormData();
+    formData.append('file', section.file);
+    formData.append('description', section.description);
+
+    setMessage('Uploading Land Use Raster data...');
+    const response = await axios.post(
+      'http://localhost:3000/api/land-use-raster',
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+
+    console.log('Land Use Raster upload response:', response.data);
+  };
+
   const uploadGeneric = async (dataTypeKey, section) => {
     const payload = {
       name: section.name,
@@ -396,7 +565,9 @@ const UploadPage = () => {
         'digital-elevation-models',
         'roads',
         'geology',
-        'land-use',
+
+        'settlement',
+        'land-use-raster', // Ensure to include raster endpoint
       ];
 
       const responses = await Promise.all(
@@ -451,7 +622,10 @@ const UploadPage = () => {
         dataTypes.reduce(
           (acc, type) => ({
             ...acc,
-            [type.key]: { name: '', files: null, geojson: null },
+            [type.key]:
+              type.key === 'land-use-raster'
+                ? { description: '', file: null }
+                : { name: '', files: null, geojson: null },
           }),
           {}
         )
