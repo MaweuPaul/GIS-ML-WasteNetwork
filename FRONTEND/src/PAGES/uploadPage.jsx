@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import axios from 'axios';
 import { useDropzone } from 'react-dropzone';
 import Navbar from '../components/Navbar';
 import ResultsPage from '../pages/ResultsPage';
+import axios from 'axios';
 import shp from 'shpjs';
 import MapVisualization from '../components/MapVisualizer';
 
@@ -15,7 +15,7 @@ const dataTypes = [
   { key: 'rivers', label: 'Rivers' },
   { key: 'roads', label: 'Roads' },
   { key: 'settlement', label: 'Settlement' },
-  { key: 'land-use-raster', label: 'Land Use ' },
+  { key: 'land-use-raster', label: 'Land Use Raster' }, // Retained for upload
 ];
 
 const DataTypeSection = ({
@@ -25,13 +25,13 @@ const DataTypeSection = ({
   onUpload,
   isUploading,
   uploadSuccess,
-  setAllGeoJsonData,
+  setLayersData,
 }) => {
   const onDrop = useCallback(
     async (acceptedFiles) => {
       try {
         if (dataType.key === 'land-use-raster') {
-          // Handle raster file upload
+          // Handle Land Use Raster upload
           const file = acceptedFiles[0];
           if (file) {
             setData((prevData) => ({
@@ -43,7 +43,7 @@ const DataTypeSection = ({
             }));
           }
         } else {
-          // Existing vector file handling
+          // Handle Shapefile uploads for vector data
           const filesObject = {};
           const requiredExtensions = ['shp', 'dbf', 'prj'];
           const optionalExtensions = ['cpg'];
@@ -82,9 +82,9 @@ const DataTypeSection = ({
             },
           }));
 
-          setAllGeoJsonData((prevData) => ({
+          setLayersData((prevData) => ({
             ...prevData,
-            features: [...prevData.features, ...geojson.features],
+            [dataType.key]: geojson,
           }));
         }
       } catch (error) {
@@ -92,7 +92,7 @@ const DataTypeSection = ({
         alert(`Error processing file: ${error.message}`);
       }
     },
-    [dataType.key, setData, setAllGeoJsonData]
+    [dataType.key, setData, setLayersData]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -195,7 +195,7 @@ const DataTypeSection = ({
           isUploading ||
           (dataType.key === 'land-use-raster'
             ? !data[dataType.key].file
-            : uploadSuccess)
+            : !data[dataType.key].name || !data[dataType.key].geojson)
         }
         className={`mt-4 w-full py-3 px-4 border border-transparent rounded-md text-lg font-medium text-white 
           ${
@@ -222,7 +222,7 @@ const Sidebar = ({ activeSection, setActiveSection, data }) => {
       return data[type.key].file;
     }
     const section = data[type.key];
-    return section.name && section.files;
+    return section.name && section.geojson;
   };
 
   return (
@@ -267,10 +267,15 @@ const UploadPage = () => {
   const [uploadSuccess, setUploadSuccess] = useState({});
   const [activeSection, setActiveSection] = useState(dataTypes[0].key);
   const [activePage, setActivePage] = useState('upload');
-  const [allGeoJsonData, setAllGeoJsonData] = useState({
-    type: 'FeatureCollection',
-    features: [],
-  });
+  const [layersData, setLayersData] = useState(
+    dataTypes.reduce(
+      (acc, type) => ({
+        ...acc,
+        [type.key]: null,
+      }),
+      {}
+    )
+  );
 
   const handleUpload = async (dataTypeKey) => {
     const section = data[dataTypeKey];
@@ -281,7 +286,9 @@ const UploadPage = () => {
     ) {
       setMessage(
         `Please complete all fields for ${
-          dataTypeKey === 'land-use-raster' ? 'Land Use Raster' : section.label
+          dataTypeKey === 'land-use-raster'
+            ? 'Land Use Raster'
+            : dataTypes.find((type) => type.key === dataTypeKey).label
         } before uploading.`
       );
       return;
@@ -304,16 +311,12 @@ const UploadPage = () => {
           await uploadAreaOfInterest(section);
           break;
 
-        case 'land-use':
-          await uploadLandUse(section);
+        case 'land-use-raster':
+          await uploadLandUseRaster(section, dataTypeKey); // Pass dataTypeKey
           break;
 
         case 'settlement':
           await uploadSettlement(section);
-          break;
-
-        case 'land-use-raster':
-          await uploadLandUseRaster(section);
           break;
 
         default:
@@ -445,6 +448,37 @@ const UploadPage = () => {
     console.log('Area of Interest upload response:', response.data);
   };
 
+  const uploadLandUseRaster = async (section, dataTypeKey) => {
+    const formData = new FormData();
+    formData.append('file', section.file);
+    formData.append('description', section.description);
+
+    setMessage('Uploading Land Use Raster data...');
+    try {
+      const response = await axios.post(
+        'http://localhost:3000/api/land-use-raster',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+
+      console.log('Land Use Raster upload response:', response.data);
+
+      // Optionally, mark upload as successful
+      setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
+      setMessage('Land Use Raster data uploaded successfully!');
+
+      // Do NOT add to layersData to exclude from visualization
+      // If you need to store it elsewhere, handle accordingly
+    } catch (error) {
+      console.error('Land Use Raster upload error:', error);
+      setMessage(`Error uploading Land Use Raster data: ${error.message}`);
+    }
+  };
+
   const uploadLandUse = async (section) => {
     const features = Array.isArray(section.geojson.features)
       ? section.geojson.features
@@ -476,54 +510,78 @@ const UploadPage = () => {
   };
 
   const uploadSettlement = async (section) => {
+    console.log('Section data:', section);
+
     const features = Array.isArray(section.geojson.features)
       ? section.geojson.features
       : [section.geojson];
-    const modifiedFeatures = features.map((feature) => ({
-      type: feature.type,
-      geometry: {
-        type: feature.geometry.type,
-        coordinates: feature.geometry.coordinates,
-        bbox: feature.geometry.bbox,
-      },
-      properties: {
-        ...feature.properties,
-        settlementName:
+
+    console.log('Number of features:', features.length);
+
+    const modifiedFeatures = features.map((feature, index) => {
+      console.log(`Feature ${index} geometry:`, feature.geometry);
+      if (!feature.geometry) {
+        console.error(`Feature ${index} is missing geometry:`, feature);
+      }
+      return {
+        name:
           feature.properties.settlement_name ||
-          feature.properties.settlementName,
-        population: feature.properties.population,
-      },
-    }));
-    const payload = { features: modifiedFeatures };
-
-    setMessage('Uploading Settlement data...');
-    const response = await axios.post(
-      'http://localhost:3000/api/settlement',
-      payload,
-      {
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-    console.log('Settlement upload response:', response.data);
-  };
-
-  const uploadLandUseRaster = async (section) => {
-    const formData = new FormData();
-    formData.append('file', section.file);
-    formData.append('description', section.description);
-
-    setMessage('Uploading Land Use Raster data...');
-    const response = await axios.post(
-      'http://localhost:3000/api/land-use-raster',
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
+          feature.properties.settlementName ||
+          section.name ||
+          `Settlement ${index}`,
+        type: feature.type,
+        geometry: feature.geometry,
+        properties: {
+          ...feature.properties,
+          population: feature.properties.population,
         },
-      }
-    );
+      };
+    });
 
-    console.log('Land Use Raster upload response:', response.data);
+    const chunkSize = 20;
+    const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
+
+    for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
+      const chunk = modifiedFeatures.slice(i, i + chunkSize);
+      const payload = chunk; // Send the chunk directly, not wrapped in a 'features' object
+
+      console.log(
+        `Chunk ${Math.floor(i / chunkSize) + 1} payload:`,
+        JSON.stringify(payload, null, 2)
+      );
+
+      setMessage(
+        `Uploading Settlement data: chunk ${
+          Math.floor(i / chunkSize) + 1
+        } of ${totalChunks}...`
+      );
+
+      try {
+        const response = await axios.post(
+          'http://localhost:3000/api/settlement',
+          payload,
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+        console.log(
+          `Settlement chunk ${Math.floor(i / chunkSize) + 1} upload response:`,
+          response.data
+        );
+      } catch (error) {
+        console.error(
+          `Error uploading Settlement chunk ${Math.floor(i / chunkSize) + 1}:`,
+          error.response ? error.response.data : error.message
+        );
+        throw new Error(
+          `Failed to upload Settlement chunk ${
+            Math.floor(i / chunkSize) + 1
+          }: ${error.message}`
+        );
+      }
+    }
+
+    setMessage('Settlement data uploaded successfully!');
   };
 
   const uploadGeneric = async (dataTypeKey, section) => {
@@ -564,10 +622,9 @@ const UploadPage = () => {
         'area-of-interest',
         'digital-elevation-models',
         'roads',
+        'land-use-raster',
         'geology',
-
         'settlement',
-        'land-use-raster', // Ensure to include raster endpoint
       ];
 
       const responses = await Promise.all(
@@ -631,10 +688,15 @@ const UploadPage = () => {
         )
       );
       setUploadSuccess({});
-      setAllGeoJsonData({
-        type: 'FeatureCollection',
-        features: [],
-      });
+      setLayersData(
+        dataTypes.reduce(
+          (acc, type) => ({
+            ...acc,
+            [type.key]: null,
+          }),
+          {}
+        )
+      );
     } catch (error) {
       console.error('Error cleaning database:', error);
       setMessage(`Error cleaning database: ${error.message}`);
@@ -674,7 +736,7 @@ const UploadPage = () => {
                     onUpload={handleUpload}
                     isUploading={isUploading}
                     uploadSuccess={uploadSuccess[type.key]}
-                    setAllGeoJsonData={setAllGeoJsonData}
+                    setLayersData={setLayersData}
                   />
                 </div>
               ))}
@@ -694,7 +756,7 @@ const UploadPage = () => {
                 <h2 className="text-2xl font-semibold mb-4">
                   Data Visualization
                 </h2>
-                <MapVisualization geoJsonData={allGeoJsonData} />
+                <MapVisualization layersData={layersData} />
               </div>
             </>
           ) : (
