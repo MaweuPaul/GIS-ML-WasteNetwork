@@ -123,18 +123,18 @@ model River {
 }
 
 model Settlement {
-  id         Int                      @id @default(autoincrement())
-  name       String
-  population Int?
-  bbox       Float[]
-  geom       Unsupported("geometry")?
-  properties Json
-  createdAt  DateTime                 @default(now())
-  updatedAt  DateTime                 @updatedAt
+  id           Int                      @id @default(autoincrement())
+  name         String?
+  type         String
+  geometryType String
+  coordinates  Json
+  properties   Json
+  geom         Unsupported("geometry(Polygon, 4326)")
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
 
   @@index([geom])
 }
-
    model LandUseRaster {
      id          Int      @id @default(autoincrement())
      description String

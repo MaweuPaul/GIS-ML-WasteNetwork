@@ -57,4 +57,20 @@ const getLandUseRaster = async (req, res) => {
   }
 };
 
-module.exports = { uploadLandUseRaster, getLandUseRaster };
+const deleteAllLanduse = async (req, res) => {
+  try {
+    const deletedCount = await prisma.landUseRaster.deleteMany();
+    res.status(200).json({
+      success: true,
+      message: 'Landuse data deleted successfully',
+      count: deletedCount.count,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clear landuse ',
+      error: error.message,
+    });
+  }
+};
+module.exports = { uploadLandUseRaster, getLandUseRaster, deleteAllLanduse };

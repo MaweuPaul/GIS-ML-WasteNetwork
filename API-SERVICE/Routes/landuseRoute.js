@@ -3,6 +3,7 @@ const multer = require('multer');
 const {
   uploadLandUseRaster,
   getLandUseRaster,
+  deleteAllLanduse,
 } = require('../Controllers/landuseController');
 
 const router = express.Router();
@@ -23,10 +24,8 @@ const upload = multer({
   },
 });
 
-// POST /api/land-use-raster
 router.post('/', upload.single('file'), uploadLandUseRaster);
-
-// GET /api/land-use-raster/:id
+router.delete('/deleteAll', deleteAllLanduse);
 router.get('/:id', getLandUseRaster);
 
 module.exports = router;
