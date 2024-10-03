@@ -50,7 +50,6 @@ const createSettlements = async (req, res) => {
     const createdSettlements = await prisma.$transaction(
       features.map((feature) => {
         const { name, type, geometry, properties } = feature;
-        console.log('geometry is ', geometry);
 
         // Ensure geometry is not null
         if (!geometry) {
