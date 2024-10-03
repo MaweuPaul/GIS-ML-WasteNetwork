@@ -76,7 +76,7 @@ const MapVisualization = ({ layersData }) => {
         {/* GeoJSON Layers */}
         <LayersControl position="topright">
           {Object.entries(layersData)
-            .filter(([layerName]) => layerName !== 'land-use-raster') // Exclude 'land-use-raster'
+            .filter(([layerName]) => layerName !== 'land-use-raster')
             .map(
               ([layerName, layerData]) =>
                 visibleLayers[layerName] &&
