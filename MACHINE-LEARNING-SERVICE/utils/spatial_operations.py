@@ -2,10 +2,10 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
+import matplotlib.colors as mcolors
 from shapely.geometry import MultiPolygon, LineString
-from pyproj import CRS
 from shapely.ops import unary_union
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+from pyproj import CRS
 
 def fetch_data_from_postgis(query, engine):
     return gpd.read_postgis(query, engine, geom_col='geom')
@@ -25,10 +25,10 @@ def create_arcgis_like_buffers(gdf, distances):
         buffered_geoms = []
         for geom in gdf_projected.geometry:
             if geom.geom_type == 'MultiLineString':
-                buffered = MultiPolygon([LineString(part).buffer(distance, cap_style=3, join_style=2, resolution=16) 
+                buffered = MultiPolygon([LineString(part).buffer(distance, cap_style=3, join_style=2, resolution=32) 
                                          for part in geom.geoms])
             else:
-                buffered = geom.buffer(distance, cap_style=3, join_style=2, resolution=16)
+                buffered = geom.buffer(distance, cap_style=3, join_style=2, resolution=32)
             buffered_geoms.append(buffered)
         
         # Merge all buffers into a single MultiPolygon
@@ -42,45 +42,25 @@ def create_arcgis_like_buffers(gdf, distances):
         buffered_gdf = buffered_gdf.to_crs(gdf.crs)
         buffered_gdfs.append(buffered_gdf)
     return buffered_gdfs
-
-def plot_buffers(buffered_gdfs, original_gdf, title='Rivers with Buffers'):
-    print("Executing updated plot_buffers function")
-    fig, ax = plt.subplots(figsize=(15, 15))
-    colors = ['#FFA07A', '#98FB98', '#87CEFA', '#DDA0DD']
+def plot_buffers(buffered_gdfs, original_gdf, ax=None, title='Buffers', color='blue', feature_color='darkblue'):
+    if ax is None:
+        _, ax = plt.subplots(figsize=(15, 15))
     
     legend_patches = []
     for i, buffered_gdf in enumerate(reversed(buffered_gdfs)):
         if not buffered_gdf.empty:
-            color = colors[i]
-            buffered_gdf.plot(ax=ax, alpha=0.5, edgecolor='none', facecolor=color)
-            legend_patches.append(mpatches.Patch(color=color, alpha=0.5, 
+            alpha = 0.1 + (0.2 * i)  # Vary opacity from 0.1 to 0.7
+            buffered_gdf.plot(ax=ax, edgecolor='none', facecolor=color, alpha=alpha, aspect=None)
+            legend_patches.append(mpatches.Patch(facecolor=color, alpha=alpha, 
                                   label=f'{buffered_gdf["buffer_distance"].iloc[0]}m Buffer'))
     
-    original_gdf.plot(ax=ax, color='blue', linewidth=1, zorder=5)
-    legend_patches.append(mlines.Line2D([], [], color='blue', linewidth=1, label='Original Geometry'))
+    original_gdf.plot(ax=ax, color=feature_color, linewidth=1, zorder=5, aspect=None)
+    legend_patches.append(mlines.Line2D([], [], color=feature_color, linewidth=1, label='Original Geometry'))
     
-    plt.title(title, fontsize=16)
-    plt.xlabel('Longitude', fontsize=12)
-    plt.ylabel('Latitude', fontsize=12)
-    
-    # Create legend
+    ax.set_title(title, fontsize=16)
     ax.legend(handles=legend_patches, title='Buffer Distances', 
               loc='upper left', bbox_to_anchor=(1, 1), fontsize=10)
     
-    ax.set_aspect('equal')
-    plt.tight_layout()
+    ax.set_axis_off()
     
-    ax.annotate('N', xy=(0.02, 0.98), xytext=(0.02, 0.93),
-                arrowprops=dict(facecolor='black', width=1, headwidth=8),
-                ha='center', va='center', fontsize=20,
-                xycoords=ax.transAxes)
-    
-    scalebar = AnchoredSizeBar(ax.transData,
-                               0.01, '1 km', 'lower right', 
-                               pad=0.5,
-                               color='black',
-                               frameon=False,
-                               size_vertical=0.005)
-    ax.add_artist(scalebar)
-    
-    plt.show()
+    return ax
