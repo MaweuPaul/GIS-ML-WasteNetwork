@@ -38,49 +38,51 @@ const getGeology = async (req, res) => {
  * Create a Geology with File Upload
  */
 const createGeology = async (req, res) => {
-  const { name, description, geometry } = req.body;
-  const file = req.file;
-
-  if (!file) {
-    return res.status(400).json({ message: 'No file uploaded' });
-  }
+  const { name, geometry, bbox, properties } = req.body;
 
   try {
-    const geology = await prisma.$executeRaw`
+    // Format the bbox array correctly for PostgreSQL
+    const formattedBbox = bbox ? `{${bbox.join(',')}}` : null;
+
+    // Convert the geometry to a string
+    const geometryString = JSON.stringify(geometry);
+
+    // Use text for the geometry instead of a parameter
+    const [geology] = await prisma.$queryRaw`
       INSERT INTO "Geology" (
         "name",
-        "description",
-        "fileName",
-        "filePath",
-        "fileSize",
-        "fileType",
         "geom",
+        "bbox",
         "properties",
         "createdAt",
         "updatedAt"
       ) VALUES (
         ${name},
-        ${description},
-        ${file.filename},
-        ${file.path},
-        ${file.size},
-        ${file.mimetype},
-        ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
-        ${JSON.stringify(req.body.properties || {})},
+        ST_SetSRID(ST_GeomFromGeoJSON(${geometryString}::jsonb), 4326),
+        ${formattedBbox}::float[],
+        ${JSON.stringify(properties)}::jsonb,
         NOW(),
         NOW()
-      ) RETURNING *;
+      ) RETURNING id, name, bbox, properties, "createdAt", "updatedAt"
     `;
 
-    res.status(201).json({ message: 'File uploaded successfully', geology });
+    // Fetch the geometry separately
+    const [geomResult] = await prisma.$queryRaw`
+      SELECT ST_AsGeoJSON("geom") as geom
+      FROM "Geology"
+      WHERE id = ${geology.id}
+    `;
+
+    geology.geom = JSON.parse(geomResult.geom);
+
+    res.status(201).json({ message: 'Geology created successfully', geology });
   } catch (error) {
     console.error('Error in createGeology:', error);
     res
       .status(500)
-      .json({ message: 'Failed to upload file', error: error.message });
+      .json({ message: 'Failed to create geology', error: error.message });
   }
 };
-
 /**
  * Update a Geology by ID
  */
@@ -126,10 +128,28 @@ const deleteGeology = async (req, res) => {
   }
 };
 
+const deleteAllGeology = async (req, res) => {
+  try {
+    const deletedCount = await prisma.geology.deleteMany();
+    res.status(200).json({
+      success: true,
+      message: 'Geology cleared successfully',
+      count: deletedCount.count,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clear geology',
+      error: error.message,
+    });
+  }
+};
 module.exports = {
   getGeologies,
   getGeology,
   createGeology,
   updateGeology,
   deleteGeology,
+  deleteAllGeology,
 };
