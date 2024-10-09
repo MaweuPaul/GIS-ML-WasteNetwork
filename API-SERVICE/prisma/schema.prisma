@@ -70,14 +70,13 @@ model DigitalElevationModel {
 
 model Geology {
   id          Int                      @id @default(autoincrement())
-  name        String
-  description String?
+  name        String?
+  bbox        Float[]
   geom        Unsupported("geometry")?
   properties  Json?
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
 
-  @@index([geom])
 }
 
 model ProtectedArea {
