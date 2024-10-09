@@ -9,6 +9,7 @@ const digitalElevationModelRoutes = require('./Routes/demRoute.js');
 const areaOfInterestRoutes = require('./Routes/aoiroute.js');
 const landuseRasterRoute = require('./Routes/landuseRoute.js');
 const settlementRoutes = require('./Routes/settlementRoute.js');
+const geologyRoutes = require('./Routes/geologyRoute.js');
 const databaseRoutes = require('./Routes/databaseRoutes.js');
 const dataRoutes = require('./Routes/dataRoutes.js');
 
@@ -32,6 +33,7 @@ app.use('/api/area-of-interest', areaOfInterestRoutes);
 app.use('/api/land-use-raster', landuseRasterRoute);
 app.use('/api/settlement', settlementRoutes);
 app.use('/api/database', databaseRoutes);
+app.use('/api/geology', geologyRoutes);
 app.use('/api/data', dataRoutes);
 
 // Catch-all route for API
