@@ -7,6 +7,7 @@ const checkDatabaseEmpty = async (req, res) => {
     const riverCount = await prisma.river.count();
     const protectedAreaCount = await prisma.protectedArea.count();
     const areaOfInterestCount = await prisma.areaOfInterest.count();
+    const geologyCount = await prisma.geology.count();
     const digitalElevationModelCount =
       await prisma.digitalElevationModel.count();
     const landUseRasterCount = await prisma.landUseRaster.count();
@@ -19,7 +20,8 @@ const checkDatabaseEmpty = async (req, res) => {
       areaOfInterestCount +
       digitalElevationModelCount +
       landUseRasterCount +
-      settlementCount;
+      settlementCount +
+      geologyCount;
 
     res.status(200).json({
       isEmpty: totalCount === 0,
@@ -31,6 +33,7 @@ const checkDatabaseEmpty = async (req, res) => {
         digitalElevationModels: digitalElevationModelCount,
         landUseRasters: landUseRasterCount,
         settlements: settlementCount,
+        geology: geologyCount,
       },
     });
   } catch (error) {
