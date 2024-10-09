@@ -15,7 +15,7 @@ const dataTypes = [
   { key: 'rivers', label: 'Rivers' },
   { key: 'roads', label: 'Roads' },
   { key: 'settlement', label: 'Settlement' },
-  { key: 'land-use-raster', label: 'Land Use Raster' }, // Retained for upload
+  { key: 'land-use-raster', label: 'Land Use Raster' },
 ];
 
 const DataTypeSection = ({
@@ -31,7 +31,6 @@ const DataTypeSection = ({
     async (acceptedFiles) => {
       try {
         if (dataType.key === 'land-use-raster') {
-          // Handle Land Use Raster upload
           const file = acceptedFiles[0];
           if (file) {
             setData((prevData) => ({
@@ -43,7 +42,6 @@ const DataTypeSection = ({
             }));
           }
         } else {
-          // Handle Shapefile uploads for vector data
           const filesObject = {};
           const requiredExtensions = ['shp', 'dbf', 'prj'];
           const optionalExtensions = ['cpg'];
@@ -298,33 +296,33 @@ const UploadPage = () => {
     setMessage('Preparing upload...');
 
     try {
+      let result;
       switch (dataTypeKey) {
         case 'digitalElevationModel':
-          await uploadDEM(section);
+          result = await uploadDEM(section);
           break;
-
         case 'soils':
-          await uploadSoils(section);
+          result = await uploadSoils(section);
           break;
-
         case 'area-of-interest':
-          await uploadAreaOfInterest(section);
+          result = await uploadAreaOfInterest(section);
           break;
-
         case 'land-use-raster':
-          await uploadLandUseRaster(section, dataTypeKey); // Pass dataTypeKey
+          result = await uploadLandUseRaster(section, dataTypeKey);
           break;
-
         case 'settlement':
-          await uploadSettlement(section);
+          result = await uploadSettlement(section);
           break;
-
+        case 'geology':
+          result = await uploadGeneric(dataTypeKey, section);
+          break;
         default:
-          await uploadGeneric(dataTypeKey, section);
+          result = await uploadGeneric(dataTypeKey, section);
       }
 
       setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
       setMessage(`${dataTypeKey} data uploaded successfully!`);
+      console.log('Upload result:', result);
     } catch (error) {
       console.error('Upload error:', error);
       setMessage(`Error uploading ${dataTypeKey} data: ${error.message}`);
@@ -467,46 +465,12 @@ const UploadPage = () => {
 
       console.log('Land Use Raster upload response:', response.data);
 
-      // Optionally, mark upload as successful
       setUploadSuccess((prev) => ({ ...prev, [dataTypeKey]: true }));
       setMessage('Land Use Raster data uploaded successfully!');
-
-      // Do NOT add to layersData to exclude from visualization
-      // If you need to store it elsewhere, handle accordingly
     } catch (error) {
       console.error('Land Use Raster upload error:', error);
       setMessage(`Error uploading Land Use Raster data: ${error.message}`);
     }
-  };
-
-  const uploadLandUse = async (section) => {
-    const features = Array.isArray(section.geojson.features)
-      ? section.geojson.features
-      : [section.geojson];
-    const modifiedFeatures = features.map((feature) => ({
-      type: feature.type,
-      geometry: {
-        type: feature.geometry.type,
-        coordinates: feature.geometry.coordinates,
-        bbox: feature.geometry.bbox,
-      },
-      properties: {
-        ...feature.properties,
-        landUseType:
-          feature.properties.land_use_type || feature.properties.landUseType,
-      },
-    }));
-    const payload = { features: modifiedFeatures };
-
-    setMessage('Uploading Land Use data...');
-    const response = await axios.post(
-      'http://localhost:3000/api/land-use',
-      payload,
-      {
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-    console.log('Land Use upload response:', response.data);
   };
 
   const uploadSettlement = async (section) => {
@@ -543,7 +507,7 @@ const UploadPage = () => {
 
     for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
       const chunk = modifiedFeatures.slice(i, i + chunkSize);
-      const payload = chunk; // Send the chunk directly, not wrapped in a 'features' object
+      const payload = chunk;
 
       console.log(
         `Chunk ${Math.floor(i / chunkSize) + 1} payload:`,
@@ -585,12 +549,27 @@ const UploadPage = () => {
   };
 
   const uploadGeneric = async (dataTypeKey, section) => {
-    const payload = {
-      name: section.name,
-      geojson: section.geojson,
-    };
+    let payload;
+    let url = `http://localhost:3000/api/${dataTypeKey}`;
 
-    const url = `http://localhost:3000/api/${dataTypeKey}`;
+    if (dataTypeKey === 'geology') {
+      const feature =
+        section.geojson.type === 'Feature'
+          ? section.geojson
+          : section.geojson.features[0];
+      payload = {
+        name: section.name,
+        geometry: feature.geometry,
+        bbox: feature.geometry.bbox || [],
+        properties: feature.properties || {},
+      };
+    } else {
+      payload = {
+        name: section.name,
+        geojson: section.geojson,
+      };
+    }
+
     console.log('Uploading data type:', dataTypeKey);
     console.log('Payload:', JSON.stringify(payload, null, 2));
 
@@ -598,13 +577,13 @@ const UploadPage = () => {
       headers: { 'Content-Type': 'application/json' },
     });
     console.log('Server response:', response.data);
+    return response.data;
   };
 
   const handleCleanDatabase = async () => {
     try {
       setMessage('Checking database status...');
 
-      // First, check if the database is empty
       const checkResponse = await axios.get(
         'http://localhost:3000/api/database/check'
       );
@@ -674,7 +653,6 @@ const UploadPage = () => {
 
       setMessage(`${deletionMessage}\n\nDetails:\n${details.join('\n')}`);
 
-      // Reset state
       setData(
         dataTypes.reduce(
           (acc, type) => ({
