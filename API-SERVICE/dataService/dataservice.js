@@ -20,6 +20,10 @@ const fetchData = async (page = 1, limit = 100) => {
       skip: offset,
       take: limit,
     });
+    const landuseRaster = await prisma.landUseRaster.findMany({
+      skip: offset,
+      take: limit,
+    });
     const rivers = await prisma.river.findMany({ skip: offset, take: limit });
     const roads = await prisma.road.findMany({ skip: offset, take: limit });
 
@@ -31,6 +35,7 @@ const fetchData = async (page = 1, limit = 100) => {
       protectedAreas,
       rivers,
       roads,
+      landuseRaster,
     };
   } catch (error) {
     console.error('Error fetching data:', error);
