@@ -1,5 +1,5 @@
     flask
-Q    flask-cors
+  flask-cors
     requests
     pandas
     scikit-learn
