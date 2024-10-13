@@ -8,7 +8,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_bounds
 from rasterio.features import rasterize
-from rasterio.plot import plotting_extent  # Importing plotting_extent
+from rasterio.plot import plotting_extent 
 from shapely import wkt
 import warnings
 
@@ -96,7 +96,7 @@ def fetch_dem_data(engine):
             dem_df = pd.read_sql(query, connection)
         print(f"Fetched {len(dem_df)} DEM polygons")
         print(f"Geometry types: {dem_df['geometryType'].unique()}")
-        print(f"Sample geometry WKT: {dem_df['geom_wkt'].iloc[0][:100]}...")  # Print first 100 characters
+        print(f"Sample geometry WKT: {dem_df['geom_wkt'].iloc[0][:100]}...")  
         
         # Convert to GeoDataFrame
         dem_gdf = gpd.GeoDataFrame(
