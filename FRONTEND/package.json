@@ -23,7 +23,8 @@
     "react-router-dom": "^6.26.2",
     "shapefile": "^0.6.6",
     "shp-to-geojson": "^1.1.0",
-    "shpjs": "^6.1.0"
+    "shpjs": "^6.1.0",
+    "socket.io-client": "^4.8.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
