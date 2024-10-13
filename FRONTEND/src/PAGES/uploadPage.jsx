@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navbar from '../components/Navbar';
-import ResultsPage from '../pages/ResultsPage';
+import ResultsPage from '../PAGES/resultsPage';
 import axios from 'axios';
 import shp from 'shpjs';
 import MapVisualization from '../components/MapVisualizer';
