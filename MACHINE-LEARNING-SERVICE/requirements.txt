@@ -1,7 +1,18 @@
-    flask
-  flask-cors
-    requests
-    pandas
-    scikit-learn
-    ahpy
-    joblib
+geopandas
+pandas
+matplotlib
+numpy
+rasterio
+shapely
+pyproj
+eventlet
+scipy
+joblib
+scikit-learn
+flask
+flask-socketio
+flask-cors
+sqlalchemy
+psycopg2-binary
+tabulate
+python-dotenv
