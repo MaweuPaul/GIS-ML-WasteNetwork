@@ -18,16 +18,21 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 from sklearn.preprocessing import StandardScaler
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, create_engine
 import json
 from tabulate import tabulate
 import traceback
+import matplotlib.colors as colors
+import matplotlib.patches as mpatches
+from rasterio.mask import mask
+from matplotlib_scalebar.scalebar import ScaleBar
+import matplotlib.patheffects as pe
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
-# Nyeri, Kenya is approximately in UTM zone 37S
-NYERI_CRS = CRS.from_epsg(32737)
+# Nyeri, Kenya is approximately in UTM zone 37S, Arc 1960
+NYERI_CRS = CRS.from_epsg(21037)
 
 # Define consistent colors for buffers
 BUFFER_COLORS = {
@@ -39,105 +44,201 @@ BUFFER_COLORS = {
 
 # Suitability mapping functions
 def river_suitability_mapping(distance):
+    if pd.isna(distance):
+        return np.nan
     if distance <= 200:
-        return 1
+        return 1  # Not suitable
     elif 200 < distance <= 500:
-        return 2
+        return 2  # Less suitable
     elif 500 < distance <= 1000:
-        return 3
+        return 3  # Moderately Suitable
     elif 1000 < distance <= 1500:
-        return 4
+        return 4  # Suitable
     else:
-        return 5
+        return 5  # Highly suitable
 
 def residential_area_suitability_mapping(distance):
-    if distance <= 200:
-        return 1
-    elif 200 < distance <= 500:
-        return 2
-    elif 500 < distance <= 1000:
-        return 3
-    elif 1000 < distance <= 1500:
-        return 4
-    else:
-        return 5
+    return river_suitability_mapping(distance)
 
 def soil_suitability_mapping(soil_type):
+    if pd.isna(soil_type) or soil_type is None:
+        return np.nan  # No data
     soil_type = str(soil_type).lower()
-    if soil_type == 'sand':
-        return 1
-    elif soil_type == 'loam':
-        return 2
-    elif soil_type == 'silt':
-        return 4
-    elif soil_type == 'clay':
-        return 5
+    if 'sand' in soil_type:
+        return 1  # Not suitable
+    elif 'loam' in soil_type:
+        return 2  # Less suitable
+    elif 'silt' in soil_type:
+        return 4  # Suitable
+    elif 'clay' in soil_type:
+        return 5  # Highly suitable
     else:
-        return 0
+        return 3  # Moderately suitable
 
 def road_suitability_mapping(distance):
+    if pd.isna(distance):
+        return np.nan
     if distance <= 200:
-        return 1
+        return 1  # Not suitable
     elif 200 < distance <= 500:
-        return 3
+        return 3  # Moderately suitable
     elif 500 < distance <= 1000:
-        return 5
+        return 5  # Highly suitable
     elif 1000 < distance <= 1500:
-        return 4
+        return 4  # Suitable
     else:
-        return 2
+        return 2  # Less suitable
 
 def settlement_suitability_mapping(distance):
-    if distance <= 200:
-        return 1
-    elif 200 < distance <= 500:
-        return 2
-    elif 500 < distance <= 1000:
-        return 3
-    elif 1000 < distance <= 1500:
-        return 4
-    else:
-        return 5
+    return river_suitability_mapping(distance)
 
-def protected_areas_suitability_mapping(distance):
+def protectedarea_suitability_mapping(distance):
+    if pd.isna(distance):
+        return np.nan
     if distance <= 200:
-        return 1
+        return 1  # Not suitable
     elif 200 < distance <= 500:
-        return 2
+        return 2  # Less suitable
     elif 500 < distance <= 1000:
-        return 3
+        return 3  # Moderately Suitable
     elif 1000 < distance <= 1500:
-        return 4
+        return 4  # Suitable
     else:
-        return 5
+        return 5  # Highly suitable
 
 def geology_suitability_mapping(geology_type):
+    if pd.isna(geology_type) or geology_type is None:
+        return np.nan  # No data
     geology_type = str(geology_type).lower()
     if geology_type == 'ti':
-        return 3  # Moderately suitable
+        return 3  # Suitable
     elif geology_type == 'qv':
-        return 4  # Suitable
+        return 4  # Highly suitable
     elif geology_type == 'qc':
-        return 2  # Less suitable
+        return 2  # Moderately suitable
     else:
-        return 1  # Least suitable or unknown
+        return 1  # Not suitable
 
 def slope_suitability_mapping(slope_degree):
+    if pd.isna(slope_degree):
+        return np.nan
     if slope_degree <= 5:
         return 5  # Highly suitable (0-5 degrees)
     elif 5 < slope_degree <= 10:
-        return 4  # Suitable (5-10 degrees)
+        return 4  # Highly suitable (5-10 degrees)
     elif 10 < slope_degree <= 15:
-        return 3  # Moderately suitable (10-15 degrees)
+        return 3  # Suitable (10-15 degrees)
     elif 15 < slope_degree <= 20:
-        return 2  # Less suitable (15-20 degrees)
+        return 2  # Moderately suitable (15-20 degrees)
     else:
         return 1  # Not suitable (>20 degrees)
 
+def land_use_suitability_mapping(land_use):
+    if pd.isna(land_use) or land_use is None:
+        return np.nan  # No data
+    land_use_type = land_use_types.get(land_use, '').lower()
+    if 'forests' in land_use_type or 'buildup' in land_use_type:
+        return 1  # Not suitable
+    elif 'farmlands' in land_use_type:
+        return 2  # Less suitable
+    elif 'bareland' in land_use_type:
+        return 5  # Highly suitable
+    else:
+        return 3  # Moderately suitable
+
+def reclassify_suitability(suitability_scores):
+    reclassified = np.full_like(suitability_scores, np.nan, dtype=np.float32)
+    mask = ~np.isnan(suitability_scores)
+    reclassified[mask & (suitability_scores <= 20)] = 1  # Not suitable
+    reclassified[mask & (suitability_scores > 20) & (suitability_scores <= 40)] = 2  # Less suitable
+    reclassified[mask & (suitability_scores > 40) & (suitability_scores <= 60)] = 3  # Moderately suitable
+    reclassified[mask & (suitability_scores > 60) & (suitability_scores <= 80)] = 4  # Suitable
+    reclassified[mask & (suitability_scores > 80)] = 5  # Highly suitable
+    return reclassified
+
+def mask_raster_with_boundary(raster_data, transform, nyeri_gdf):
+    """Mask the raster data with the Nyeri boundary."""
+    # Convert the boundary to GeoJSON format
+    nyeri_geojson = [nyeri_gdf.geometry.unary_union.__geo_interface__]
+    
+    # Mask the raster data
+    with MemoryFile() as memfile:
+        with memfile.open(
+            driver='GTiff',
+            height=raster_data.shape[0],
+            width=raster_data.shape[1],
+            count=1,
+            dtype=raster_data.dtype,
+            crs=NYERI_CRS,
+            transform=transform
+        ) as dataset:
+            dataset.write(raster_data, 1)
+            out_image, out_transform = mask(dataset, nyeri_geojson, crop=True, nodata=np.nan)
+    return out_image[0],out_transform
+            
+from matplotlib_scalebar.scalebar import ScaleBar
+import matplotlib.patheffects as pe
+
+def create_suitability_map(data, title, output_path, transform, crs, nyeri_gdf):
+    # Mask the data with the Nyeri boundary
+    masked_data, masked_transform = mask_raster_with_boundary(data, transform, nyeri_gdf)
+    
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Define color scheme
+    cmap = colors.ListedColormap(['purple', 'red', 'yellow', 'lightgreen', 'darkgreen'])
+    norm = colors.BoundaryNorm([1, 2, 3, 4, 5, 6], cmap.N)
+    
+    # Add transparency for no data
+    cmap.set_bad(color='white', alpha=0)
+    
+    extent = plotting_extent(masked_data, masked_transform)
+    im = ax.imshow(masked_data, cmap=cmap, norm=norm, extent=extent)
+    
+    # Plot Nyeri boundary
+    nyeri_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1, label='Nyeri Boundary')
+    
+    # Add legend
+    legend_elements = [
+        mpatches.Patch(color='purple', label='Not suitable'),
+        mpatches.Patch(color='red', label='Less suitable'),
+        mpatches.Patch(color='yellow', label='Moderately suitable'),
+        mpatches.Patch(color='lightgreen', label='Suitable'),
+        mpatches.Patch(color='darkgreen', label='Highly suitable')
+    ]
+    ax.legend(handles=legend_elements, loc='lower left', fontsize=8, bbox_to_anchor=(0, -0.2))
+    
+    ax.set_title(f'{title}', fontsize=16)
+    ax.set_xlabel('Easting (meters)')
+    ax.set_ylabel('Northing (meters)')
+    
+    # Add scale bar
+    scalebar = ScaleBar(1, location='lower center', scale_loc='bottom', length_fraction=0.5, units='km', dimension='si-length')
+    ax.add_artist(scalebar)
+    
+    # Add north arrow
+    ax.annotate('N', xy=(0.95, 0.95), xycoords='axes fraction', 
+                horizontalalignment='center', verticalalignment='center',
+                fontsize=16, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="w")])
+    ax.arrow(0.95, 0.93, 0, 0.02, head_width=0.01, head_length=0.01, 
+             fc='k', ec='k', transform=ax.transAxes)
+    
+    # Add neatline
+    neatline = mpatches.Rectangle((extent[0], extent[2]), extent[1]-extent[0], extent[3]-extent[2],
+                                  linewidth=2, edgecolor='black', facecolor='none', transform=ax.transData)
+    ax.add_patch(neatline)
+    
+    # Add map information
+    ax.text(0.5, -0.3, 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960',
+            transform=ax.transAxes, fontsize=8, ha='center', va='top')
+    
+    # Adjust layout with padding
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.3)
+    
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
 def emit_progress(session_id, message, socketio):
-    """
-    Emit progress updates to the frontend.
-    """
     try:
         if socketio:
             socketio.emit('progress_update', {'session_id': session_id, 'message': message}, room=session_id)
@@ -149,9 +250,6 @@ def emit_progress(session_id, message, socketio):
         print(f"Failed to emit progress message: {e}")
 
 def emit_error(session_id, message, socketio):
-    """
-    Emit error messages to the frontend.
-    """
     try:
         if socketio:
             socketio.emit('task_error', {'session_id': session_id, 'message': message}, room=session_id)
@@ -163,9 +261,6 @@ def emit_error(session_id, message, socketio):
         print(f"Failed to emit error message: {e}")
 
 def fetch_data_from_postgis(query, engine, session_id, socketio):
-    """
-    Fetch data from PostGIS database.
-    """
     try:
         emit_progress(session_id, f"Executing query: {query}", socketio)
         gdf = gpd.read_postgis(query, engine, geom_col='geom')
@@ -175,54 +270,78 @@ def fetch_data_from_postgis(query, engine, session_id, socketio):
         emit_error(session_id, f"Error fetching data: {str(e)}", socketio)
         return None
 
+def fetch_nyeri_boundary(engine, session_id, socketio):
+    try:
+        emit_progress(session_id, "Fetching Nyeri boundary from the database.", socketio)
+        query = """
+        SELECT geom
+        FROM "AreaOfInterest"
+        """
+        gdf = fetch_data_from_postgis(query, engine, session_id, socketio)
+        if gdf is None or gdf.empty:
+            raise ValueError("Nyeri boundary not found in AreaOfInterest table.")
+        
+        nyeri_gdf = reproject_to_nyeri(gdf, session_id, socketio)
+        emit_progress(session_id, "Nyeri boundary fetched and reprojected.", socketio)
+        return nyeri_gdf
+    except Exception as e:
+        emit_error(session_id, f"Error fetching Nyeri boundary: {str(e)}", socketio)
+        return None
+
 def reproject_to_nyeri(gdf, session_id, socketio):
-    """
-    Reproject GeoDataFrame to Nyeri CRS.
-    """
     try:
         emit_progress(session_id, f"Original CRS: {gdf.crs}", socketio)
-        emit_progress(session_id, f"Reprojecting data to Nyeri CRS (EPSG:32737)", socketio)
+        emit_progress(session_id, f"Reprojecting data to Nyeri CRS (EPSG:21037)", socketio)
         gdf_projected = gdf.to_crs(NYERI_CRS)
-        emit_progress(session_id, f"Data reprojected to Nyeri CRS (EPSG:32737)", socketio)
+        emit_progress(session_id, f"Data reprojected to Nyeri CRS (EPSG:21037)", socketio)
         return gdf_projected
     except Exception as e:
         emit_error(session_id, f"Error reprojecting data: {str(e)}", socketio)
         return None
 
-def create_arcgis_like_buffers(gdf, distances, session_id, socketio):
-    """
-    Create buffers similar to ArcGIS style.
-    """
+def mask_to_nyeri(gdf, nyeri_gdf, session_id, socketio):
+    try:
+        emit_progress(session_id, "Masking GeoDataFrame to Nyeri boundary.", socketio)
+        masked_gdf = gpd.overlay(gdf, nyeri_gdf, how='intersection')
+        emit_progress(session_id, "Masking completed.", socketio)
+        return masked_gdf
+    except Exception as e:
+        emit_error(session_id, f"Error masking GeoDataFrame to Nyeri: {str(e)}", socketio)
+        return gpd.GeoDataFrame(columns=gdf.columns)
+
+def create_arcgis_like_buffers(gdf, distances, session_id, socketio, nyeri_gdf):
     buffers = []
     for distance in distances:
         try:
             emit_progress(session_id, f"Creating buffer of {distance} meters.", socketio)
             buffer = gdf.geometry.buffer(distance)
             merged_buffer = gpd.GeoDataFrame(geometry=[buffer.unary_union], crs=gdf.crs)
-            buffers.append(merged_buffer)
-            emit_progress(session_id, f"Merged buffers for {distance} meters.", socketio)
+            masked_buffer = mask_to_nyeri(merged_buffer, nyeri_gdf, session_id, socketio)
+            buffers.append(masked_buffer)
+            emit_progress(session_id, f"Merged and masked buffers for {distance} meters.", socketio)
         except Exception as e:
             emit_error(session_id, f"Error creating buffer at {distance} meters: {str(e)}", socketio)
     return buffers
 
-def plot_buffers(buffers, original_gdf, session_id, socketio, title='Buffer Zones'):
-    """
-    Plot buffer zones and save the plot.
-    """
+def plot_buffers(buffers, original_gdf,nyeri_gdf, session_id, socketio, title='Buffer Zones'):
     try:
         emit_progress(session_id, f"Starting to plot buffers for {title}.", socketio)
         fig, ax = plt.subplots(figsize=(12, 8))
         
+        # Plot Nyeri boundary
+        nyeri_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1, label='Nyeri Boundary')
+        
         # Plot original geometries
-        original_gdf.plot(ax=ax, color='red', alpha=0.5)
+        original_gdf.plot(ax=ax, color='red', alpha=0.5, label='Original Geometries')
         
         # Plot buffer zones
-        for i, buffer in enumerate(buffers):
-            buffer.plot(ax=ax, alpha=0.3, color=BUFFER_COLORS.get(title.split()[0], f'C{i}'))
+        for i, buffer_set in enumerate(buffers):
+            buffer_set.plot(ax=ax, alpha=0.3, color=BUFFER_COLORS.get(title.split()[0], f'C{i}'), label=f'Buffer {i+1}')
         
         ax.set_title(title)
         ax.axis('off')
-        
+        ax.legend()
+
         # Save the plot
         os.makedirs('output', exist_ok=True)
         plot_path = os.path.join('output', f'{title.lower().replace(" ", "_")}_session_{session_id}.png')
@@ -236,15 +355,13 @@ def plot_buffers(buffers, original_gdf, session_id, socketio, title='Buffer Zone
         return None
 
 def fetch_dem_data(engine, session_id, socketio):
-    """
-    Fetch DEM data from PostGIS and reproject to Nyeri CRS.
-    """
     query = """
     SELECT id, name, elevation, "geometryType", 
            ST_AsText(geom) as geom_wkt
     FROM "DigitalElevationModel"
     """
     try:
+        emit_progress(session_id, "Fetching DEM data from the database.", socketio)
         with engine.connect() as connection:
             dem_df = pd.read_sql(text(query), connection)
         if dem_df.empty:
@@ -268,9 +385,6 @@ def fetch_dem_data(engine, session_id, socketio):
         return None
 
 def calculate_slope(dem_raster, transform, session_id, socketio):
-    """
-    Calculate slope from DEM raster using the Horn method.
-    """
     try:
         # Get cell size
         dx = transform[0]
@@ -296,9 +410,6 @@ def calculate_slope(dem_raster, transform, session_id, socketio):
         return None
 
 def visualize_slope(slope, transform, session_id, socketio):
-    """
-    Visualize the slope data and save as PNG and TIF.
-    """
     try:
         fig, ax = plt.subplots(figsize=(10, 10))
         im = ax.imshow(slope, cmap='terrain', extent=plotting_extent(slope, transform))
@@ -334,10 +445,7 @@ def visualize_slope(slope, transform, session_id, socketio):
         emit_error(session_id, f"Error visualizing slope: {str(e)}", socketio)
         return None, None
 
-def fetch_and_classify_vector(table_name, classification_func, engine, session_id, socketio):
-    """
-    Fetch vector data from PostGIS and classify it based on the provided function.
-    """
+def fetch_and_classify_vector(table_name, classification_func, engine, session_id, socketio, nyeri_gdf):
     try:
         emit_progress(session_id, f"Fetching and classifying {table_name} data.", socketio)
         
@@ -349,31 +457,35 @@ def fetch_and_classify_vector(table_name, classification_func, engine, session_i
         else:
             raise ValueError(f"Unsupported table: {table_name}")
         
-        gdf = gpd.read_postgis(query, engine, geom_col='geom')
+        gdf = fetch_data_from_postgis(query, engine, session_id, socketio)
         
-        if 'geom' not in gdf.columns:
-            raise ValueError(f"Required 'geom' column not found in {table_name} table.")
-        
-        gdf = gdf.set_geometry('geom')
-        gdf = reproject_to_nyeri(gdf, session_id, socketio)
-        
-        if table_name == 'Geology':
-            # Extract 'GLG' from properties JSON
-            gdf['classification_field'] = gdf['properties'].apply(lambda x: json.loads(x)['GLG'] if isinstance(x, str) else x.get('GLG') if isinstance(x, dict) else None)
-        elif table_name == 'Soil':
-            gdf['classification_field'] = gdf['soilType']
-        
-        gdf['suitability_score'] = gdf['classification_field'].apply(classification_func)
-        emit_progress(session_id, f"Fetched and classified {table_name} data.", socketio)
-        return gdf
+        if gdf is not None:
+            gdf_projected = reproject_to_nyeri(gdf, session_id, socketio)
+            gdf_masked = mask_to_nyeri(gdf_projected, nyeri_gdf, session_id, socketio)
+            
+            if 'geom' in gdf_masked.columns:
+                gdf_masked = gdf_masked.rename(columns={'geom': 'geometry'}).set_geometry('geometry')
+            
+            geometry_types = gdf_masked.geometry.geom_type.unique()
+            emit_progress(session_id, f"Geometry types for {table_name}: {geometry_types}", socketio)
+            
+            if table_name == 'Geology':
+                # Extract 'GLG' from properties JSON
+                gdf_masked['classification_field'] = gdf_masked['properties'].apply(lambda x: json.loads(x)['GLG'] if isinstance(x, str) else x.get('GLG') if isinstance(x, dict) else None)
+            elif table_name == 'Soil':
+                gdf_masked['classification_field'] = gdf_masked['soilType']
+            
+            gdf_masked['suitability_score'] = gdf_masked['classification_field'].apply(classification_func)
+            emit_progress(session_id, f"Fetched and classified {table_name} data.", socketio)
+            return gdf_masked
+        else:
+            emit_error(session_id, f"No data fetched for {table_name}.", socketio)
+            return None
     except Exception as e:
         emit_error(session_id, f"Error fetching and classifying {table_name} data: {str(e)}", socketio)
         return None
 
 def fetch_and_plot_landuse_raster(engine, session_id, socketio):
-    """
-    Fetch land use raster from PostGIS, convert it to a numpy array, and plot it using MemoryFile.
-    """
     query = """
     SELECT raster
     FROM "LandUseRaster"
@@ -444,24 +556,21 @@ def fetch_and_plot_landuse_raster(engine, session_id, socketio):
         return None, None, None, None, None
 
 def process_landuse_suitability(landuse_raster, land_use_types, session_id, socketio):
-    """
-    Process land use suitability based on the land use raster.
-    """
     try:
-        def landuse_suitability_mapping(land_use):
+        def landuse_suitability_mapping_internal(land_use):
             land_use_type = land_use_types.get(land_use, '').lower()
             if 'forests' in land_use_type:
-                return 1  # Least suitable
+                return 1  # Not suitable
             elif 'bareland' in land_use_type:
-                return 5  # Most suitable
+                return 5  # Highly suitable
             elif 'buildup' in land_use_type:
                 return 2  # Less suitable
             elif 'farmland' in land_use_type:
                 return 4  # Suitable
             else:
-                return 0  # Unknown land use type or No Data
+                return np.nan  # No Data or Unknown land use type
         
-        landuse_suitability = np.vectorize(landuse_suitability_mapping)(landuse_raster)
+        landuse_suitability = np.vectorize(landuse_suitability_mapping_internal)(landuse_raster)
         emit_progress(session_id, "Land use suitability mapping applied.", socketio)
         return landuse_suitability
     except Exception as e:
@@ -469,9 +578,6 @@ def process_landuse_suitability(landuse_raster, land_use_types, session_id, sock
         return None
 
 def train_suitability_model(X, y, session_id, socketio):
-    """
-    Train a Random Forest model for suitability prediction.
-    """
     try:
         emit_progress(session_id, "Starting ML model training.", socketio)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -493,9 +599,6 @@ def train_suitability_model(X, y, session_id, socketio):
         return None, None
 
 def apply_ml_model(total_suitability, model, scaler, rows, cols, transform, session_id, socketio):
-    """
-    Apply the trained ML model to predict suitability.
-    """
     try:
         emit_progress(session_id, "Applying ML model for suitability prediction.", socketio)
         X = total_suitability.reshape(-1, 1)
@@ -537,92 +640,118 @@ def apply_ml_model(total_suitability, model, scaler, rows, cols, transform, sess
         return None, None
 
 def calculate_weights():
-    """
-    Calculate weights for landfill site suitability criteria using AHP with whole numbers.
-    """
-    # Define the criteria based on the provided datasets
     criteria = [
         'River',
         'Residential Area',
         'Soil',
         'Road',
         'Settlement',
-        'Protected Areas',
+        'ProtectedArea',
         'Geology',
-        'Land Use'
+        'LandUse'
     ]
     n = len(criteria)
     
-    # Whole number-based pairwise comparison matrix following Saaty's scale (1, 3, 5, 7, 9)
+    # Example pairwise comparison matrix (AHP)
+    # This should be filled based on actual pairwise comparisons
+    # Here, it's assumed to be a consistent matrix for demonstration
     matrix = np.array([
-        [1,      3,          5,      5,         3,              3,            5,        5],  # River
-        [1/3,      1,          3,      3,         3,              3,            3,        3],  # Residential Area
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Soil
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Road
-        [1/3, 1/3,          1,      1,         1,              1,            1,        1],  # Settlement
-        [1/3, 1/3,          1,      1,         1,              1,            1,        1],  # Protected Areas
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Geology
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Land Use
+        [1,     3,      5,      5,      3,      3,      5,      5],  # River
+        [1/3,   1,      3,      3,      3,      3,      3,      3],  # Residential Area
+        [1/5,   1/3,    1,      1,      1,      1,      1,      1],  # Soil
+        [1/5,   1/3,    1,      1,      1,      1,      1,      1],  # Road
+        [1/3,   1/3,    1,      1,      1,      1,      1,      1],  # Settlement
+        [1/3,   1/3,    1,      1,      1,      1,      1,      1],  # ProtectedArea
+        [1/5,   1/3,    1,      1,      1,      1,      1,      1],  # Geology
+        [1/5,   1/3,    1,      1,      1,      1,      1,      1],  # LandUse
     ])
 
-    # Calculate weights using the eigenvector method
-    eigenvalues, eigenvectors = np.linalg.eig(matrix)
-    max_index = np.argmax(eigenvalues.real)
-    weights = eigenvectors[:, max_index].real
-    weights = weights / np.sum(weights)
+    try:
+        eigenvalues, eigenvectors = np.linalg.eig(matrix)
+        max_index = np.argmax(eigenvalues.real)
+        weights = eigenvectors[:, max_index].real
+        weights = weights / np.sum(weights)
 
-    # Convert weights to percentages
-    weights_percent = weights * 100
+        weights_percent = weights * 100
 
-    # Create a dictionary of criteria and their corresponding weights
-    weights_dict = dict(zip(criteria, weights_percent))
+        weights_dict = dict(zip(criteria, weights_percent))
 
-    return weights_dict, matrix
+        return weights_dict, matrix
+    except Exception as e:
+        print(f"Error calculating weights: {e}")
+        return {}, matrix
 
 def calculate_consistency_ratio(matrix, weights):
-    """
-    Calculate the Consistency Ratio (CR) to assess the consistency of the pairwise comparisons.
-    """
-    n = matrix.shape[0]
-    # Calculate lambda_max
-    weighted_sum = np.dot(matrix, weights)
-    lambda_max = np.sum(weighted_sum / weights) / n
+    try:
+        n = matrix.shape[0]
+        weighted_sum = np.dot(matrix, weights)
+        lambda_max = np.sum(weighted_sum / weights) / n
 
-    # Consistency Index (CI)
-    consistency_index = (lambda_max - n) / (n - 1)
+        consistency_index = (lambda_max - n) / (n - 1)
 
-    # Random Index (RI) values for different n
-    random_index = {3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24,
-                   7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49}
-    ri = random_index.get(n, 1.49)  # Default to 1.49 if n > 10
+        random_index = {3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24,
+        7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49}
+        ri = random_index.get(n, 1.49)  # Default to 1.49 if n > 10
 
-    # Consistency Ratio (CR)
-    consistency_ratio = consistency_index / ri
+        consistency_ratio = consistency_index / ri
 
-    return consistency_ratio
+        return consistency_ratio
+    except Exception as e:
+        print(f"Error calculating consistency ratio: {e}")
+        return None
+
+def rasterize_buffers(gdf, buffers, transform, shape, suitability_mapping, distances, session_id, socketio):
+    try:
+        emit_progress(session_id, "Rasterizing buffers.", socketio)
+        
+        # Initialize raster with NaNs
+        buffer_raster = np.full(shape, np.nan, dtype='float32')
+        
+        # Rasterize each buffer with its suitability score
+        for buffer, distance in zip(buffers, distances):
+            value = suitability_mapping(distance)
+            rasterized = rasterize(
+                [(geom, value) for geom in buffer.geometry],
+                out_shape=shape,
+                transform=transform,
+                fill=np.nan,
+                all_touched=True,
+                dtype='float32'
+            )
+            # Update buffer_raster where NaN
+            buffer_raster = np.where(np.isnan(buffer_raster), rasterized, buffer_raster)
+        # Fill remaining NaNs with the suitability score for areas beyond the maximum buffer distance
+        buffer_raster = np.where(np.isnan(buffer_raster), suitability_mapping(max(distances) + 1), buffer_raster)
+        
+        emit_progress(session_id, "Buffers rasterized successfully.", socketio)
+        return buffer_raster
+    except Exception as e:
+        emit_error(session_id, f"Error in rasterize_buffers: {str(e)}", socketio)
+        return None
 
 def run_full_spatial_operations(engine, session_id, socketio):
     try:
-        emit_progress(session_id, "Starting full spatial operations.", socketio)
+        emit_progress(session_id, "Initiating full spatial analysis for landfill site suitability.", socketio)
         
-        # Use predefined weights
+        # Fetch Nyeri boundary
+        nyeri_gdf = fetch_nyeri_boundary(engine, session_id, socketio)
+        if nyeri_gdf is None:
+            raise ValueError("Nyeri boundary could not be fetched.")
+        
         weights_dict, matrix = calculate_weights()
-        emit_progress(session_id, f"Using predefined AHP Weights: {weights_dict}", socketio)
+        emit_progress(session_id, f"AHP Weights calculated: {weights_dict}", socketio)
         
-        # Calculate and report consistency ratio
-        normalized_weights = np.array([weight / 100 for weight in weights_dict.values()])
-        consistency_ratio = calculate_consistency_ratio(matrix, normalized_weights)
+        consistency_ratio = calculate_consistency_ratio(matrix, np.array(list(weights_dict.values())))
         emit_progress(session_id, f"Consistency Ratio: {consistency_ratio:.4f}", socketio)
         if consistency_ratio < 0.1:
-            emit_progress(session_id, "The pairwise comparison matrix is consistent (CR < 0.1).", socketio)
+            emit_progress(session_id, "AHP matrix is consistent (CR < 0.1).", socketio)
         else:
             emit_progress(session_id, "Warning: The pairwise comparison matrix is not consistent (CR >= 0.1).", socketio)
             emit_progress(session_id, "Please revise the comparison matrix to improve consistency.", socketio)
         
-        # Define feature types and their respective buffer distances
         feature_types = [
             ('River', [200, 500, 1000, 1500]),
-            ('Road', [200, 500, 1000]),
+            ('Road', [200, 500, 1000, 1500]),
             ('ProtectedArea', [200, 500, 1000, 1500]),
             ('Settlement', [200, 500, 1000, 1500])
         ]
@@ -634,53 +763,52 @@ def run_full_spatial_operations(engine, session_id, socketio):
         for feature_type, distances in feature_types:
             emit_progress(session_id, f"Processing {feature_type} data.", socketio)
             
-            # Fetch data from PostGIS
             query = f'SELECT id, geom FROM "{feature_type}"'
             gdf = fetch_data_from_postgis(query, engine, session_id, socketio)
             
             if gdf is not None:
-                # Reproject to Nyeri CRS
                 gdf_projected = reproject_to_nyeri(gdf, session_id, socketio)
+                gdf_masked = mask_to_nyeri(gdf_projected, nyeri_gdf, session_id, socketio)
                 
-                # Ensure the geometry column is named 'geometry'
-                if 'geom' in gdf_projected.columns:
-                    gdf_projected = gdf_projected.rename(columns={'geom': 'geometry'}).set_geometry('geometry')
+                if 'geometry' in gdf_masked.columns:
+                    gdf_masked = gdf_masked.rename(columns={'geom': 'geometry'}).set_geometry('geometry')
                 
-                # Get unique geometry types
-                geometry_types = gdf_projected.geometry.geom_type.unique()
+                geometry_types = gdf_masked.geometry.geom_type.unique()
                 emit_progress(session_id, f"Geometry types for {feature_type}: {geometry_types}", socketio)
                 
-                # Create buffers
-                buffers = create_arcgis_like_buffers(gdf_projected, distances, session_id, socketio)
+                buffers = create_arcgis_like_buffers(gdf_masked, distances, session_id, socketio, nyeri_gdf)
                 
                 if buffers:
-                    all_buffers.extend(buffers)
-                    all_original.append(gdf_projected)
+                    all_buffers.append(buffers)
+                    all_original.append(gdf_masked)
                     
-                    # Plot buffers
-                    buffer_plot_path = plot_buffers(buffers, gdf_projected, session_id, socketio, title=f'{feature_type} Buffers')
+                    buffer_plot_path = plot_buffers(buffers, gdf_masked, nyeri_gdf, session_id, socketio, title=f'{feature_type} Buffers')
                     if buffer_plot_path:
                         buffer_images[feature_type] = buffer_plot_path
         
-        # Create combined buffer zones plot
         if all_buffers and all_original:
             emit_progress(session_id, "Creating combined buffer zones plot.", socketio)
             try:
-                # Concatenate all original GeoDataFrames
                 concatenated_original = pd.concat(all_original, ignore_index=True)
                 
-                # Debug: Print columns and data types
-                emit_progress(session_id, f"Columns in concatenated GeoDataFrame: {concatenated_original.columns}", socketio)
+                
+                all_buffers_combined = gpd.GeoDataFrame(pd.concat(
+                    [gdf for buffer_list in all_buffers for gdf in buffer_list], ignore_index=True
+                ))        
+                               # Ensure the combined GeoDataFrame has a geometry column
+                if 'geometry' not in all_buffers_combined.columns:
+                 all_buffers_combined = all_buffers_combined.set_geometry('geometry')
+     
                 emit_progress(session_id, f"Data types: {concatenated_original.dtypes}", socketio)
                 
-                # Ensure 'geometry' column is present and set as active geometry column
                 if 'geometry' in concatenated_original.columns:
                     concatenated_original = gpd.GeoDataFrame(concatenated_original, geometry='geometry', crs=NYERI_CRS)
                 else:
                     raise ValueError("No 'geometry' column found in concatenated data.")
                 
                 combined_image_path = plot_buffers(
-                    all_buffers, 
+                    all_buffers_combined,
+                    nyeri_gdf,
                     concatenated_original, 
                     session_id, 
                     socketio, 
@@ -688,16 +816,15 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 )
                 if combined_image_path:
                     buffer_images['Combined'] = combined_image_path
+                emit_progress(session_id, f"Combined buffer zones plot created: {combined_image_path}", socketio)
             except Exception as e:
                 emit_error(session_id, f"Error creating combined buffer zones: {str(e)}", socketio)
         else:
             emit_error(session_id, "No valid data to create combined buffer zones.", socketio)
         
-         # DEM and slope
         emit_progress(session_id, "Starting DEM and slope analysis.", socketio)
         dem_gdf = fetch_dem_data(engine, session_id, socketio)
         if dem_gdf is not None:
-            # Rasterize DEM
             bounds = dem_gdf.total_bounds
             res = 30  # 30m resolution
             rows = int((bounds[3] - bounds[1]) / res)
@@ -709,15 +836,17 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 out_shape=(rows, cols),
                 transform=transform,
                 fill=np.nan,
-                all_touched=True ,
+                all_touched=True,
                 dtype='float32'
             )
             
-            # Handle NaN values by filling them
+            emit_progress(session_id, f"DEM Raster Shape: {dem_raster.shape}", socketio)
+            emit_progress(session_id, f"DEM Raster Stats: min={np.nanmin(dem_raster)}, max={np.nanmax(dem_raster)}, mean={np.nanmean(dem_raster)}", socketio)
+            
+            # Fill NaN values with nearest valid 
             from scipy.ndimage import generic_filter
-
+            
             def fill_nan(array):
-                # Replace NaN with the mean of the neighborhood
                 if np.isnan(array).all():
                     return np.nan
                 return np.nanmean(array)
@@ -725,7 +854,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
             dem_raster_filled = generic_filter(dem_raster, fill_nan, size=3, mode='nearest')
             emit_progress(session_id, "NaN values in DEM raster have been filled.", socketio)
             
-            # Calculate slope
+           # Calculate slope
             def calculate_slope(dem, transform):
                 dx, dy = np.gradient(dem)
                 cellsize_x = transform.a
@@ -773,15 +902,14 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 dst.write(slope, 1)
             
             emit_progress(session_id, f"Slope analysis completed and results saved: {slope_tif_path}", socketio)
-
-        # Geology
-        geology_gdf = fetch_and_classify_vector('Geology', geology_suitability_mapping, engine, session_id, socketio)
-
-        # Soil
-        soil_gdf = fetch_and_classify_vector('Soil', soil_suitability_mapping, engine, session_id, socketio)
-
-        # Land Use
-        emit_progress(session_id, "Starting land use raster processing", socketio)
+            buffer_images['Slope'] = slope_plot_path
+        else:
+                emit_error(session_id, "Slope calculation failed.", socketio)
+        
+        geology_gdf = fetch_and_classify_vector('Geology', geology_suitability_mapping, engine, session_id, socketio, nyeri_gdf)
+        soil_gdf = fetch_and_classify_vector('Soil', soil_suitability_mapping, engine, session_id, socketio, nyeri_gdf)
+        
+        emit_progress(session_id, "Starting land use processing", socketio)
         landuse_raster, landuse_transform, landuse_crs, landuse_plot_path, land_use_types = fetch_and_plot_landuse_raster(engine, session_id, socketio)
         if landuse_raster is not None:
             buffer_images['LandUse'] = landuse_plot_path
@@ -790,14 +918,13 @@ def run_full_spatial_operations(engine, session_id, socketio):
         else:
             emit_error(session_id, "Failed to fetch land use raster.", socketio)
             landuse_suitability = None
-
-        # Create a common grid for all layers
+        
         emit_progress(session_id, "Starting to create common grid for all layers", socketio)
         if all_original:
             emit_progress(session_id, "all_original is not empty, proceeding with grid creation", socketio)
             try:
                 bounds = concatenated_original.total_bounds
-                emit_progress(session_id, f"Calculated bounds: {bounds}", socketio)
+                emit_progress(session_id, f"Common grid bounds calculated: {bounds}", socketio)
             except Exception as e:
                 emit_error(session_id, f"Error calculating bounds: {str(e)}", socketio)
                 raise
@@ -808,17 +935,20 @@ def run_full_spatial_operations(engine, session_id, socketio):
             transform = from_bounds(*bounds, cols, rows)
             emit_progress(session_id, f"Created transform with rows={rows}, cols={cols}", socketio)
 
-            # Rasterize all vector layers
             layers = {}
-            emit_progress(session_id, "Starting to rasterize vector layers", socketio)
-            for i, (feature_type, _) in enumerate(feature_types):
+            emit_progress(session_id, "Rasterizing vector layers to common grid...", socketio)
+            for i, (feature_type, distances) in enumerate(feature_types):
                 try:
-                    layers[f'Buffer_{feature_type}'] = rasterize(
-                        [(geom, 1) for geom in all_buffers[i].geometry],
-                        out_shape=(rows, cols),
-                        transform=transform,
-                        fill=0,
-                        dtype='uint8'
+                    suitability_mapping = globals()[f"{feature_type.lower()}_suitability_mapping"]
+                    layers[f'Buffer_{feature_type}'] = rasterize_buffers(
+                        all_original[i],
+                        all_buffers[i],
+                        transform,
+                        (rows, cols),
+                        suitability_mapping,
+                        distances,
+                        session_id,
+                        socketio
                     )
                     emit_progress(session_id, f"Rasterized {feature_type} buffer", socketio)
                 except Exception as e:
@@ -830,7 +960,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         [(geom, value) for geom, value in zip(geology_gdf.geometry, geology_gdf.suitability_score)],
                         out_shape=(rows, cols),
                         transform=transform,
-                        fill=0,
+                        fill=np.nan,
                         dtype='float32'
                     )
                     emit_progress(session_id, "Rasterized Geology layer", socketio)
@@ -843,7 +973,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         [(geom, value) for geom, value in zip(soil_gdf.geometry, soil_gdf.suitability_score)],
                         out_shape=(rows, cols),
                         transform=transform,
-                        fill=0,
+                        fill=np.nan,
                         dtype='float32'
                     )
                     emit_progress(session_id, "Rasterized Soil layer", socketio)
@@ -852,8 +982,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
 
             if landuse_suitability is not None:
                 try:
-                    # Resample land use suitability to match the common grid
-                    resampled_landuse = np.zeros((rows, cols), dtype='float32')
+                    resampled_landuse = np.full((rows, cols), np.nan, dtype='float32')
                     rasterio.warp.reproject(
                         source=landuse_suitability,
                         destination=resampled_landuse,
@@ -868,10 +997,9 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 except Exception as e:
                     emit_error(session_id, f"Error resampling Land Use layer: {str(e)}", socketio)
 
-            # Add slope suitability to layers if available
             if slope is not None:
                 try:
-                    resampled_slope = np.zeros((rows, cols), dtype='float32')
+                    resampled_slope = np.full((rows, cols), np.nan, dtype='float32')
                     rasterio.warp.reproject(
                         source=slope,
                         destination=resampled_slope,
@@ -882,41 +1010,47 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         resampling=rasterio.warp.Resampling.bilinear
                     )
                     layers['Slope'] = np.vectorize(slope_suitability_mapping)(resampled_slope)
-                    emit_progress(session_id, "Added Slope layer", socketio)
+                    emit_progress(session_id, "Slope layer resampled and added to common grid", socketio)
                 except Exception as e:
                     emit_error(session_id, f"Error adding Slope layer: {str(e)}", socketio)
 
-            # Calculate weighted suitability
             emit_progress(session_id, "Starting weighted suitability calculation", socketio)
-            total_suitability = np.zeros((rows, cols))
+            total_suitability = np.full((rows, cols), np.nan)
             for layer_name, layer in layers.items():
                 if layer_name in weights_dict:
-                    total_suitability += layer * weights_dict[layer_name]
+                    weight = weights_dict[layer_name]
                 elif layer_name.startswith('Buffer_'):
-                    total_suitability += layer * (weights_dict.get('Buffers', 1) / len([l for l in layers.keys() if l.startswith('Buffer_')]))
+                    weight = weights_dict.get('Buffers', 1) / len([l for l in layers.keys() if l.startswith('Buffer_')])
                 else:
-                    total_suitability += layer * weights_dict.get(layer_name, 0)
+                    weight = weights_dict.get(layer_name, 0)
+                
+                # Use np.nansum to ignore NaN values during addition
+                total_suitability = np.nansum([total_suitability, layer * weight], axis=0)
                 emit_progress(session_id, f"Added {layer_name} to total suitability", socketio)
 
-            # Normalize total suitability to 0-100 range
-            with np.errstate(invalid='ignore', divide='ignore'):
-                total_suitability = ((total_suitability - np.nanmin(total_suitability)) / 
-                                     (np.nanmax(total_suitability) - np.nanmin(total_suitability))) * 100
-            total_suitability = np.nan_to_num(total_suitability)  # Replace NaN with 0
+            # Normalize only valid data
+            valid_mask = ~np.isnan(total_suitability)
+            total_suitability[valid_mask] = ((total_suitability[valid_mask] - np.nanmin(total_suitability)) / 
+                                             (np.nanmax(total_suitability) - np.nanmin(total_suitability))) * 100
+            emit_progress(session_id, "Total suitability scores normalized to 0-100 range", socketio)
 
-            # Visualize and save the total suitability map
-            plt.figure(figsize=(12, 8))
-            plt.imshow(total_suitability, cmap='viridis')
-            plt.colorbar(label='Suitability Score')
-            plt.title('Total Weighted Suitability')
-            plt.axis('off')
-            suitability_map_path = os.path.join('output', f'total_suitability_map_session_{session_id}.png')
-            plt.savefig(suitability_map_path)
-            plt.close()
+            reclassified_suitability = reclassify_suitability(total_suitability)
+        
+            for layer_name, layer in layers.items():
+            # Remove "Buffer_" from the layer name
+                clean_layer_name = layer_name.replace('Buffer_', '')
+    
+                output_path = os.path.join('output', f'{layer_name.lower()}_suitability_map_session_{session_id}.png')
+                create_suitability_map(layer, f'{clean_layer_name} Suitability Map', output_path, transform, NYERI_CRS, nyeri_gdf)
+    
+                buffer_images[f'{layer_name}Suitability'] = output_path
+                emit_progress(session_id, f"Created suitability map for {clean_layer_name}", socketio)
 
-            emit_progress(session_id, f"Total suitability map saved as {suitability_map_path}", socketio)
+            output_path = os.path.join('output', f'total_suitability_map_session_{session_id}.png')
+            create_suitability_map(reclassified_suitability, 'Total Suitability Map', output_path, transform, NYERI_CRS, nyeri_gdf)
+            buffer_images['TotalSuitability'] = output_path
+            emit_progress(session_id, "Created total suitability map", socketio)
 
-            # Save the suitability raster
             suitability_raster_path = os.path.join('output', f'total_suitability_map_session_{session_id}.tif')
             with rasterio.open(
                 suitability_raster_path,
@@ -933,15 +1067,13 @@ def run_full_spatial_operations(engine, session_id, socketio):
 
             emit_progress(session_id, f"Total suitability raster saved as {suitability_raster_path}", socketio)
 
-            # Prepare data for ML model
             X = total_suitability.reshape(-1, 1)
-            y = (total_suitability > np.percentile(total_suitability, 75)).astype(int).ravel()
+            y = (total_suitability > np.nanpercentile(total_suitability, 75)).astype(int).ravel()
             
-            # Train ML model
-            model, scaler = train_suitability_model(X, y, session_id, socketio)
+            model, scaler = train_suitability_model(X[~np.isnan(X).ravel()], y[~np.isnan(X).ravel()], session_id, socketio)
             
             if model is not None and scaler is not None:
-                # Apply ML model
+                emit_progress(session_id, "Applying machine learning model...", socketio)
                 ml_suitability_map_path, ml_suitability_raster_path = apply_ml_model(
                     total_suitability, model, scaler, rows, cols, transform, session_id, socketio
                 )
@@ -949,7 +1081,6 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 if ml_suitability_map_path:
                     buffer_images['MLSuitability'] = ml_suitability_map_path
 
-            # Emit buffer image paths and suitability map paths to frontend
             socketio.emit('buffer_images', {'session_id': session_id, 'images': buffer_images}, room=session_id)
 
             emit_progress(session_id, "All spatial operations and ML predictions completed successfully.", socketio)
@@ -965,10 +1096,6 @@ def run_full_spatial_operations(engine, session_id, socketio):
         pass
 
 if __name__ == "__main__":
-    # This block is for testing purposes
-    from sqlalchemy import create_engine
-    
-    # Replace with your actual database connection string
     engine = create_engine('postgresql://username:password@host:port/database')
     
     class MockSocketIO:
