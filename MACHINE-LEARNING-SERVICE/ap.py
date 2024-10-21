@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS, cross_origin
@@ -20,13 +17,13 @@ app.config['SECRET_KEY'] = 'your_secret_key'
 # Initialize Flask-CORS before defining any routes
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Initialize SocketIO with CORS allowed origins
+# Initialize SocketIO with threading async mode
 socketio = SocketIO(
     app, 
     cors_allowed_origins="*", 
     logger=True, 
     engineio_logger=True, 
-    async_mode='eventlet'
+    async_mode='threading'  # Changed from 'eventlet' to 'threading'
 )
 
 # Database connection setup
