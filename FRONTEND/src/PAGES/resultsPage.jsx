@@ -15,11 +15,10 @@ const ResultsPage = () => {
   const [selectedMap, setSelectedMap] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [completionTime, setCompletionTime] = useState(null);
+  const [startTime, setStartTime] = useState(null);
 
   const socketRef = useRef(null);
   const sessionIdRef = useRef(`session_${Date.now()}`);
-
-  // Ref for the end of the messages list
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -40,7 +39,12 @@ const ResultsPage = () => {
       if (data.session_id === sessionIdRef.current) {
         setMessages((prevMessages) => [
           ...prevMessages,
-          { id: Date.now(), text: data.message, status: 'completed' },
+          {
+            id: Date.now(),
+            text: data.message,
+            status: 'completed',
+            elapsedTime: getElapsedTime(),
+          },
         ]);
       }
     });
@@ -50,7 +54,12 @@ const ResultsPage = () => {
       if (data.session_id === sessionIdRef.current) {
         setMessages((prevMessages) => [
           ...prevMessages,
-          { id: Date.now(), text: data.message, status: 'error' },
+          {
+            id: Date.now(),
+            text: data.message,
+            status: 'error',
+            elapsedTime: getElapsedTime(),
+          },
         ]);
         setError(data.message);
       }
@@ -81,6 +90,7 @@ const ResultsPage = () => {
             id: Date.now(),
             text: 'All operations completed successfully.',
             status: 'completed',
+            elapsedTime: getElapsedTime(),
           },
         ]);
       }
@@ -99,12 +109,41 @@ const ResultsPage = () => {
     };
   }, []);
 
-  // Effect to scroll to the bottom when messages change
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
+
+  useEffect(() => {
+    let timer;
+    if (startTime && status !== 'COMPLETED') {
+      timer = setInterval(() => {
+        setMessages((prevMessages) => {
+          const newMessages = [...prevMessages];
+          if (newMessages.length > 0) {
+            newMessages[newMessages.length - 1] = {
+              ...newMessages[newMessages.length - 1],
+              elapsedTime: getElapsedTime(),
+            };
+          }
+          return newMessages;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [startTime, status]);
+
+  const getElapsedTime = () => {
+    if (!startTime) return 'Not started';
+    const elapsed = Date.now() - startTime;
+    const seconds = Math.floor(elapsed / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    return `${hours.toString().padStart(2, '0')}:${(minutes % 60)
+      .toString()
+      .padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+  };
 
   const startSpatialOperations = () => {
     setError(null);
@@ -113,6 +152,7 @@ const ResultsPage = () => {
     setBufferImages({});
     setSuitabilityMaps({});
     setCompletionTime(null);
+    setStartTime(Date.now());
 
     axios
       .post(`${API_BASE_URL}/start_spatial_operations`, {
@@ -181,9 +221,7 @@ const ResultsPage = () => {
     <div className="container mx-auto px-4 py-8">
       <div className="bg-white shadow-lg rounded-lg overflow-hidden">
         <div className="px-6 py-4 bg-blue-600 flex justify-between items-center">
-          <h1 className="text-3xl font-bold text-white">
-            Spatial Analysis Results
-          </h1>
+          <h1 className="text-3xl font-bold text-white">Analysis Results</h1>
           <button
             onClick={startSpatialOperations}
             className="px-4 py-2 text-white font-semibold rounded bg-green-500 hover:bg-green-600"
@@ -284,9 +322,13 @@ const ResultsPage = () => {
                     }`}
                   ></span>
                   <span>{message.text}</span>
+                  {message.elapsedTime && (
+                    <span className="ml-auto text-sm text-gray-500">
+                      {message.elapsedTime}
+                    </span>
+                  )}
                 </div>
               ))}
-              {/* Dummy div to scroll into view */}
               <div ref={messagesEndRef} />
             </div>
           </div>
