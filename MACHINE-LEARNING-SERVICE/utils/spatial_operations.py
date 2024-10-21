@@ -27,6 +27,7 @@ import matplotlib.patches as mpatches
 from rasterio.mask import mask
 from matplotlib_scalebar.scalebar import ScaleBar
 import matplotlib.patheffects as pe
+from waste_collection_optimization import optimize_waste_collection
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
@@ -206,14 +207,18 @@ def create_suitability_map(data, title, output_path, transform, crs, nyeri_gdf):
         mpatches.Patch(color='lightgreen', label='Suitable'),
         mpatches.Patch(color='darkgreen', label='Highly suitable')
     ]
-    ax.legend(handles=legend_elements, loc='lower left', fontsize=8, bbox_to_anchor=(0, -0.2))
+    legend = ax.legend(handles=legend_elements, loc='lower left', fontsize=8, bbox_to_anchor=(0, -0.3))
+    
+    # Add map information
+    map_info = ax.text(0.5, -0.3, 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960',
+                       transform=ax.transAxes, fontsize=8, ha='right', va='top')
     
     ax.set_title(f'{title}', fontsize=16)
     ax.set_xlabel('Easting (meters)')
     ax.set_ylabel('Northing (meters)')
     
     # Add scale bar
-    scalebar = ScaleBar(1, location='lower center', scale_loc='bottom', length_fraction=0.5, units='km', dimension='si-length')
+    scalebar = ScaleBar(1, location='lower center', scale_loc='bottom', length_fraction=0.5, units='km', dimension='si-length', label='Scale')
     ax.add_artist(scalebar)
     
     # Add north arrow
@@ -224,20 +229,20 @@ def create_suitability_map(data, title, output_path, transform, crs, nyeri_gdf):
              fc='k', ec='k', transform=ax.transAxes)
     
     # Add neatline
-    neatline = mpatches.Rectangle((extent[0], extent[2]), extent[1]-extent[0], extent[3]-extent[2],
-                                  linewidth=2, edgecolor='black', facecolor='none', transform=ax.transData)
-    ax.add_patch(neatline)
+    fig.patch.set_linewidth(2)
+    fig.patch.set_edgecolor('black')
     
-    # Add map information
-    ax.text(0.5, -0.3, 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960',
-            transform=ax.transAxes, fontsize=8, ha='center', va='top')
+    # Set gridlines
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0f}'))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0f}'))
     
     # Adjust layout with padding
-    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.3)
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.4)
     
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
-
+    
 def emit_progress(session_id, message, socketio):
     try:
         if socketio:
@@ -1080,6 +1085,28 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 
                 if ml_suitability_map_path:
                     buffer_images['MLSuitability'] = ml_suitability_map_path
+                    
+            emit_progress(session_id, "Starting waste collection optimization", socketio)
+
+            result = optimize_waste_collection(engine, session_id, socketio, nyeri_gdf)
+
+            if result is None:
+                emit_progress(session_id, "Waste collection optimization failed or returned no results.", socketio)
+            else:
+                optimal_locations, plot_paths = result
+                
+                if optimal_locations is not None and not optimal_locations.empty:
+                    emit_progress(session_id, f"Waste collection optimization completed. Found {len(optimal_locations)} optimal locations.", socketio)
+                    # Add the optimal locations plot to the buffer_images dictionary
+                    buffer_images['OptimalWasteCollectionPoints'] = plot_paths.get('optimal_locations')
+                    # Add other waste collection plots to the buffer_images dictionary
+                    buffer_images['WasteCollectionRoadSuitability'] = plot_paths.get('road_suitability')
+                    buffer_images['WasteCollectionSettlementSuitability'] = plot_paths.get('settlement_suitability')
+                    buffer_images['WasteCollectionCombinedSuitability'] = plot_paths.get('combined_suitability')
+                else:
+                    emit_progress(session_id, "Waste collection optimization completed but found no optimal locations.", socketio)
+            
+            socketio.emit('buffer_images', {'session_id': session_id, 'images': buffer_images}, room=session_id)
 
             socketio.emit('buffer_images', {'session_id': session_id, 'images': buffer_images}, room=session_id)
 
