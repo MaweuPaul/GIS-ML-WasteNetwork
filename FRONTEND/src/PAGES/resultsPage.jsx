@@ -15,8 +15,12 @@ const ResultsPage = () => {
   const [selectedMap, setSelectedMap] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [completionTime, setCompletionTime] = useState(null);
+
   const socketRef = useRef(null);
   const sessionIdRef = useRef(`session_${Date.now()}`);
+
+  // Ref for the end of the messages list
+  const messagesEndRef = useRef(null);
 
   useEffect(() => {
     console.log('Initializing socket connection');
@@ -95,6 +99,13 @@ const ResultsPage = () => {
     };
   }, []);
 
+  // Effect to scroll to the bottom when messages change
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
   const startSpatialOperations = () => {
     setError(null);
     setMessages([]);
@@ -135,6 +146,7 @@ const ResultsPage = () => {
             View
           </button>
           <a
+            target="_blank"
             href={`${API_BASE_URL}/${imagePath.replace(/\\/g, '/')}`}
             download={`${title.toLowerCase().replace(' ', '_')}.png`}
             className="text-green-500 hover:text-green-700"
@@ -274,6 +286,8 @@ const ResultsPage = () => {
                   <span>{message.text}</span>
                 </div>
               ))}
+              {/* Dummy div to scroll into view */}
+              <div ref={messagesEndRef} />
             </div>
           </div>
 
@@ -309,6 +323,7 @@ const ResultsPage = () => {
             </div>
             <div className="p-4 border-t flex justify-end">
               <a
+                target="_blank"
                 href={`${API_BASE_URL}/${selectedMap.imagePath.replace(
                   /\\/g,
                   '/'
