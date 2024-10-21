@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 AOI_CRS = CRS.from_epsg(21037)  # Arc 1960 / UTM zone 37S
 
 app = Flask(__name__)
-socketio = SocketIO(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 def emit_progress(message, socketio, session_id):
     logger.info(f"Progress: {message}")
@@ -98,8 +98,11 @@ def create_grid(aoi_gdf, cell_size=100, socketio=None, session_id=None):
     
     return grid_gdf, x_coords, y_coords
 
-def calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, socketio=None, session_id=None):
+def calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, aoi_gdf, socketio=None, session_id=None):
     emit_progress("Calculating proximity to roads and settlements", socketio, session_id)
+    
+    emit_progress("Clipping grid to AOI", socketio, session_id)
+    grid_gdf = gpd.clip(grid_gdf, aoi_gdf)
     
     emit_progress("Validating geometries of roads and settlements.", socketio, session_id)
     roads_gdf = validate_geometries(roads_gdf, socketio, session_id)
@@ -120,15 +123,28 @@ def calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, socketio=None, ses
     
     emit_progress("Calculating suitability scores", socketio, session_id)
     
+    # Road score (weight: 0.4)
     grid_with_settlements['road_score'] = grid_with_settlements['road_distance'].apply(
         lambda x: 5 if x < 50 else (4 if x < 200 else (3 if x < 500 else (2 if x < 1000 else 1)))
     )
     
+    # Settlement score (weight: 0.6)
     grid_with_settlements['settlement_score'] = grid_with_settlements['settlement_distance'].apply(
-        lambda x: 5 if x < 100 else (4 if x < 500 else (3 if x < 1000 else (2 if x < 2000 else 1)))
+        lambda x: 5 if x < 100 else (4 if x < 300 else (3 if x < 600 else (2 if x < 1000 else 1)))
     )
     
-    grid_with_settlements['combined_score'] = grid_with_settlements[['road_score', 'settlement_score']].min(axis=1)
+    # Combined weighted score
+    grid_with_settlements['combined_score'] = (
+        0.4 * grid_with_settlements['road_score'] + 
+        0.6 * grid_with_settlements['settlement_score']
+    )
+    
+    # Normalize combined score to 1-5 range
+    min_score = grid_with_settlements['combined_score'].min()
+    max_score = grid_with_settlements['combined_score'].max()
+    grid_with_settlements['combined_score'] = (
+        (grid_with_settlements['combined_score'] - min_score) / (max_score - min_score) * 4 + 1
+    )
     
     grid_gdf = grid_gdf.merge(
         grid_with_settlements[['road_distance', 'settlement_distance', 'road_score', 'settlement_score', 'combined_score']],
@@ -308,7 +324,7 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
         emit_progress("Grid creation failed. Aborting optimization process.", socketio, session_id)
         return None
     
-    grid_gdf = calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, socketio, session_id)
+    grid_gdf = calculate_proximity(grid_gdf, roads_gdf, settlements_gdf,aoi_boundary,socketio, session_id)
     
     grid_side_x = len(x_coords)
     grid_side_y = len(y_coords)
@@ -401,6 +417,9 @@ def handle_optimization(data):
         emit_progress("No session_id provided.", socketio, None)
         socketio.emit('optimization_failed', {'message': 'No session_id provided.'})
         return
+
+    # Join the room with the given session_id
+    socketio.enter_room(session_id)
     
     emit_progress("Received optimization request.", socketio, session_id)
     try:
@@ -410,22 +429,22 @@ def handle_optimization(data):
         socketio.emit('optimization_failed', {'message': 'Database connection failed.'}, room=session_id)
         logger.error(f"Database connection failed: {str(e)}")
         return
-    
+
     aoi_query = 'SELECT geom FROM "areaOfInterest"'  # Adjust this query as needed
     aoi_gdf = fetch_data_from_db(engine, aoi_query, socketio, session_id)
-    
+
     if aoi_gdf is None or aoi_gdf.empty:
         socketio.emit('optimization_failed', {'message': 'Failed to load Area of Interest data.'}, room=session_id)
         return
-    
+
     result = optimize_waste_collection(engine, session_id, socketio, aoi_gdf)
-    
+
     if result is None:
         socketio.emit('optimization_failed', {'message': 'Optimization process failed.'}, room=session_id)
         return
-    
+
     optimal_locations, plot_paths = result
-    
+
     if optimal_locations is not None and not optimal_locations.empty:
         emit_progress(f"Waste collection optimization completed. Found {len(optimal_locations)} optimal locations.", socketio, session_id)
         socketio.emit('optimization_complete', {
@@ -438,6 +457,3 @@ def handle_optimization(data):
             'optimal_locations': None,
             'plot_paths': plot_paths
         }, room=session_id)
-
-if __name__ == "__main__":
-    socketio.run(app, debug=True)
