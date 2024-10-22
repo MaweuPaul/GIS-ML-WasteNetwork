@@ -1122,12 +1122,3 @@ def run_full_spatial_operations(engine, session_id, socketio):
         # Clean up temporary files if needed
         pass
 
-if __name__ == "__main__":
-    engine = create_engine('postgresql://username:password@host:port/database')
-    
-    class MockSocketIO:
-        def emit(self, event, data, room=None):
-            print(f"Emitted {event}: {data}")
-    
-    mock_socketio = MockSocketIO()
-    run_full_spatial_operations(engine, "test_session", mock_socketio)
