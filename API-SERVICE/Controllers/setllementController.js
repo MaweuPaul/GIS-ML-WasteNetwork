@@ -51,43 +51,38 @@ const createSettlements = async (req, res) => {
       features.map((feature) => {
         const { name, type, geometry, properties } = feature;
 
-        // Ensure geometry is not null
         if (!geometry) {
           throw new Error('Geometry is required');
         }
 
-        // Extract geometry details
         const { type: geometryType, coordinates } = geometry;
 
-        // Use Prisma's executeRaw to handle geom field with PostGIS
         return prisma.$executeRaw`
-              INSERT INTO "Settlement" (
-                "name",
-                "type",
-                "geometryType",
-                "coordinates",
-                "properties",
-                "geom",
-                "createdAt",
-                "updatedAt"
-              ) VALUES (
-                ${name},       
-                ${type},
-                ${geometryType},
-                ${JSON.stringify(coordinates)}::jsonb,
-                ${JSON.stringify(properties)}::jsonb,
-                ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(
-                  geometry
-                )}), 4326),
-                NOW(),
-                NOW()
-              ) RETURNING *;
-            `;
+          INSERT INTO "Settlement" (
+            "name",
+            "type",
+            "geometryType",
+            "coordinates",
+            "properties",
+            "geom",
+            "createdAt",
+            "updatedAt"
+          ) VALUES (
+            ${name || ''},
+            ${type},
+            ${geometryType},
+            ${JSON.stringify(coordinates)}::jsonb,
+            ${JSON.stringify(properties)}::jsonb,
+            ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
+            NOW(),
+            NOW()
+          ) RETURNING *;
+        `;
       })
     );
 
     res.status(201).json({
-      message: 'Settlements created',
+      message: 'Settlements created successfully',
       count: createdSettlements.length,
       settlements: createdSettlements,
     });
