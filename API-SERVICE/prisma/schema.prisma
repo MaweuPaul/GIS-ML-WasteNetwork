@@ -104,7 +104,6 @@ model Road {
   bbox        Float[]
   geom        Unsupported("geometry")?
 
-  @@index([geom])
 }
 
 model River {
@@ -128,7 +127,7 @@ model Settlement {
   geometryType String
   coordinates  Json
   properties   Json
-  geom         Unsupported("geometry(Polygon, 4326)")
+  geom         Unsupported("geometry(Geometry,4326)")?
   createdAt    DateTime                 @default(now())
   updatedAt    DateTime                 @updatedAt
 
