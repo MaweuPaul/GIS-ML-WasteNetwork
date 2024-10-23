@@ -47,7 +47,7 @@ const getDigitalElevationModel = async (req, res) => {
  * Create multiple Digital Elevation Models
  */
 const createDigitalElevationModel = async (req, res) => {
-  const { features } = req.body;
+  const { features, name } = req.body;
 
   if (!Array.isArray(features) || features.length === 0) {
     return res.status(400).json({
@@ -56,17 +56,16 @@ const createDigitalElevationModel = async (req, res) => {
   }
 
   try {
-    const createdModels = await prisma.$transaction(
+    // First, insert all the features
+    const insertResults = await prisma.$transaction(
       features.map((feature) => {
         const { name, bbox, geometryType, coordinates, elevation } = feature;
         let { geometry } = feature;
 
-        // Ensure geometry is not null
         if (!geometry) {
           throw new Error('Geometry is required');
         }
 
-        // Use Prisma's executeRaw to handle geom field with PostGIS
         return prisma.$executeRaw`
           INSERT INTO "DigitalElevationModel" (
             "name",
@@ -81,15 +80,35 @@ const createDigitalElevationModel = async (req, res) => {
             ${name},
             ${bbox ? `{${bbox.join(',')}}` : null}::double precision[],
             ${JSON.stringify(coordinates)}::jsonb,
-            ${geometry.type},
+            ${geometryType},
             ${elevation},
-            ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
+             ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
             NOW(),
             NOW()
-          ) RETURNING *;
+          );
         `;
       })
     );
+
+    // Check if all insertions were successful
+    const insertedCount = insertResults.reduce(
+      (sum, result) => sum + result,
+      0
+    );
+
+    if (insertedCount !== features.length) {
+      throw new Error(
+        `Only ${insertedCount} out of ${features.length} features were inserted successfully.`
+      );
+    }
+
+    // Then, fetch the inserted rows
+    const createdModels = await prisma.digitalElevationModel.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: features.length,
+    });
 
     res.status(201).json({
       message: 'Digital elevation models created',
