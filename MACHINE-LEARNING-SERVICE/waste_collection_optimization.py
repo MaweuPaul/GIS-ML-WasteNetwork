@@ -21,6 +21,8 @@ from sqlalchemy import create_engine
 import logging
 from pyproj import CRS
 from scipy.ndimage import gaussian_filter, zoom
+from matplotlib.lines import Line2D
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -188,7 +190,30 @@ def select_optimal_locations(grid_gdf, socketio=None, session_id=None):
         logger.error(f"Error selecting optimal locations: {str(e)}")
         return pd.DataFrame()
 
-def create_suitability_map(grid_gdf, score_column, title, output_path, aoi_gdf, socketio=None, session_id=None):
+
+def create_scale_bar(ax, length=10, units='km', subdivisions=5):
+    # Create the main rectangle
+    rect = mpatches.Rectangle((0, 0), length, 0.5, facecolor='white', edgecolor='black')
+    ax.add_patch(rect)
+    
+    # Add subdivisions
+    for i in range(1, subdivisions):
+        x = i * (length / subdivisions)
+        ax.plot([x, x], [0, 0.5], color='black', linewidth=1)
+    
+    # Add labels
+    for i in range(subdivisions + 1):
+        x = i * (length / subdivisions)
+        ax.text(x, -0.25, str(int(x)), ha='center', va='top', fontsize=8)
+    
+    # Add unit label
+    ax.text(length / 2, 0.75, units, ha='center', va='bottom', fontsize=8)
+    
+    # Set limits and remove axes
+    ax.set_xlim(0, length)
+    ax.set_ylim(-0.5, 1)
+    ax.axis('off')
+def create_suitability_map(grid_gdf, score_column, title, output_path, aoi_gdf,  socketio=None, session_id=None):
     emit_progress(f"Creating suitability map: {title}", socketio, session_id)
     
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -197,49 +222,70 @@ def create_suitability_map(grid_gdf, score_column, title, output_path, aoi_gdf, 
         ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641'], N=256)
     norm = colors.BoundaryNorm([1, 2, 3, 4, 5, 6], cmap.N)
     
+    # Plot suitability grid
     grid_gdf.plot(column=score_column, ax=ax, cmap=cmap, norm=norm, legend=False)
     
-    aoi_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1, label='Area of Interest Boundary')
+   
     
+    # Plot area of interest boundary
+    aoi_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1.5, label='Area of Interest Boundary')
+    
+    ax.set_title(f'{title}', fontsize=18, fontweight='bold', y=1.05)
+    ax.set_xlabel('Easting (meters)', fontsize=12)
+    ax.set_ylabel('Northing (meters)', fontsize=12)
+    
+    # Add north arrow
+    ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction', 
+                horizontalalignment='center', verticalalignment='center',
+                fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="w")])
+    ax.arrow(0.98, 0.96, 0, 0.02, head_width=0.01, head_length=0.01, 
+             fc='k', ec='k', transform=ax.transAxes)
+    
+    # Set gridlines and ticks on all four sides
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1000:.0f}'))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y/1000:.0f}'))
+    ax.tick_params(axis='both', which='major', labelsize=10)
+    ax.tick_params(top=True, bottom=True, left=True, right=True, labeltop=True, labelbottom=True, labelleft=True, labelright=True)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Create new axes for the bottom row
+    bottom_ax = fig.add_axes([0.1, 0.02, 0.8, 0.15])
+    bottom_ax.axis('off')
+    
+    # Add legend
     legend_elements = [
         mpatches.Patch(color='#d7191c', label='Not suitable'),
         mpatches.Patch(color='#fdae61', label='Less suitable'),
         mpatches.Patch(color='#ffffbf', label='Moderately suitable'),
         mpatches.Patch(color='#a6d96a', label='Suitable'),
-        mpatches.Patch(color='#1a9641', label='Highly suitable')
+        mpatches.Patch(color='#1a9641', label='Highly suitable'),
+        Line2D([0], [0], color='black', lw=1, label='Roads')
+
+
     ]
-    ax.legend(handles=legend_elements, loc='lower center', fontsize=8, bbox_to_anchor=(0.5, -0.2), ncol=5)
+    legend = bottom_ax.legend(handles=legend_elements, loc='center left', fontsize=10, bbox_to_anchor=(0, 0.5))
     
-    ax.set_title(f'{title}', fontsize=16, fontweight='bold')
-    ax.set_xlabel('Easting (meters)')
-    ax.set_ylabel('Northing (meters)')
+    # Add custom scale bar
+    scale_ax = fig.add_axes([0.4, 0.05, 0.2, 0.03])  # Adjust position as needed
+    create_scale_bar(scale_ax, length=10, units='km', subdivisions=5)
     
-    # Create scale bar
-    scalebar = ScaleBar(1000, location='lower center', box_alpha=0.5, scale_loc='bottom', length_fraction=0.25, units='km')
-    ax.add_artist(scalebar)
+    # Add map information
+    info_text = 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960'
+    bottom_ax.text(1, 0.5, info_text, ha='right', va='center', fontsize=10, transform=bottom_ax.transAxes)
     
-    ax.annotate('N', xy=(0.95, 0.95), xycoords='axes fraction', 
-                horizontalalignment='center', verticalalignment='center',
-                fontsize=16, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="w")])
-    ax.arrow(0.95, 0.93, 0, 0.02, head_width=0.01, head_length=0.01, 
-             fc='k', ec='k', transform=ax.transAxes)
+    # Adjust subplot to make room for title and bottom information
+    plt.subplots_adjust(top=0.95, bottom=0.2)
     
+    # Add neatline
     fig.patch.set_linewidth(2)
     fig.patch.set_edgecolor('black')
     
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1000:.0f}'))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y/1000:.0f}'))
-    ax.tick_params(axis='both', which='major', labelsize=8)
-    
-    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.3)
-    
-    # Add coordinate system info outside the map
-    map_info = 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960'
-    plt.figtext(0.95, 0.01, map_info, fontsize=6, ha='right', va='bottom')
-    
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
+    
     emit_progress(f"Suitability map saved: {output_path}", socketio, session_id)
     logger.info(f"Suitability map saved: {output_path}")
 
@@ -324,10 +370,10 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
         ax.set_ylabel('Northing (meters)')
 
         ax.grid(True, linestyle='--', alpha=0.7)
-        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0f}'))
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0f}'))
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1000:.0f}'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y/1000:.0f}'))
 
-        ax.legend(loc='lower left', bbox_to_anchor=(0, 0), fontsize=12)
+        ax.legend(loc='lower left',  fontsize=12, bbox_to_anchor=(0, 0.5))
 
         scalebar = ScaleBar(1, location='lower right', box_alpha=0.5, scale_loc='bottom')
         ax.add_artist(scalebar)
