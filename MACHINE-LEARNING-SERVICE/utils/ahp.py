@@ -6,14 +6,16 @@ def calculate_weights():
     Calculate weights for landfill site suitability criteria using AHP with whole numbers.
     """
     # Define the criteria based on the provided datasets
+    
+    
     criteria = [
+        'Slope',
         'River',
-        'Residential Area',
-        'Soil',
-        'Road',
-        'Settlement',
-        'Protected Areas',
         'Geology',
+        'Soil',
+        'Protected Areas',
+        'Settlement',
+        'Road',
         'Land Use'
     ]
     n = len(criteria)
@@ -21,20 +23,18 @@ def calculate_weights():
     # Whole number-based pairwise comparison matrix following Saaty's scale (1, 3, 5, 7, 9)
     # The matrix reflects the relative importance of each criterion compared to others
     # Values above 1 indicate higher importance, reciprocals below 1 indicate lower importance
-    # Adjust this matrix based on expert judgment or specific project requirements
-    
     
     matrix = np.array([
-        [1,      3,          5,      5,         3,              3,            5,        5],  # River
-        [1/3,      1,          3,      3,         3,              3,            3,        3],  # Residential Area
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Soil
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Road
-        [1/3, 1/3,          1,      1,         1,              1,            1,        1],  # Settlement
-        [1/3, 1/3,          1,      1,         1,              1,            1,        1],  # Protected Areas
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Geology
-        [1/5, 1/3,          1,      1,         1,              1,            1,        1],  # Land Use
+        [1,      3,      3,      5,      5,      7,      9,      9],  # Slope
+        [1/3,    1,      1,      3,      3,      5,      7,      7],  # River
+        [1/3,    1,      1,      3,      3,      5,      7,      7],  # Geology
+        [1/5,    1/3,    1/3,    1,      1,      3,      5,      5],  # Soil
+        [1/5,    1/3,    1/3,    1,      1,      3,      5,      5],  # Protected Areas
+        [1/7,    1/5,    1/5,    1/3,    1/3,    1,      3,      3],  # Settlement
+        [1/9,    1/7,    1/7,    1/5,    1/5,    1/3,    1,      1],  # Road
+        [1/9,    1/7,    1/7,    1/5,    1/5,    1/3,    1,      1]   # Land Use
     ])
-
+    
     print("Pairwise Comparison Matrix:")
     print(tabulate(matrix, headers=criteria, showindex=criteria, tablefmt="grid"))
 
