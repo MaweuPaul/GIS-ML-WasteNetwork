@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
-import { FaSearch, FaDownload } from 'react-icons/fa';
+import { FaSearch, FaDownload, FaFileExcel, FaFileImage } from 'react-icons/fa';
 
 const API_BASE_URL = 'http://localhost:5000';
 
@@ -16,6 +16,8 @@ const ResultsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [completionTime, setCompletionTime] = useState(null);
   const [startTime, setStartTime] = useState(null);
+  const [excelReportPath, setExcelReportPath] = useState(null);
+  const [tiffFiles, setTiffFiles] = useState({});
 
   const socketRef = useRef(null);
   const sessionIdRef = useRef(`session_${Date.now()}`);
@@ -101,6 +103,20 @@ const ResultsPage = () => {
       setError(data.message);
     });
 
+    socketRef.current.on('excel_report', (data) => {
+      console.log('Received Excel report path:', data);
+      if (data.session_id === sessionIdRef.current) {
+        setExcelReportPath(data.path);
+      }
+    });
+
+    socketRef.current.on('tiff_files', (data) => {
+      console.log('Received TIFF files:', data);
+      if (data.session_id === sessionIdRef.current) {
+        setTiffFiles(data.files);
+      }
+    });
+
     return () => {
       console.log('Cleaning up socket connection');
       if (socketRef.current) {
@@ -171,7 +187,7 @@ const ResultsPage = () => {
   const renderMapThumbnail = (title, imagePath, type) => (
     <div className="bg-white rounded-lg shadow-md overflow-hidden transition-all duration-300 hover:shadow-xl hover:scale-105">
       <img
-        src={`${API_BASE_URL}/${imagePath.replace(/\\/g, '/')}`}
+        src={`${API_BASE_URL}/${imagePath}`}
         alt={title}
         className="w-full h-48 object-cover cursor-pointer"
         onClick={() => setSelectedMap({ title, imagePath })}
@@ -187,12 +203,27 @@ const ResultsPage = () => {
           </button>
           <a
             target="_blank"
-            href={`${API_BASE_URL}/${imagePath.replace(/\\/g, '/')}`}
-            download={`${title.toLowerCase().replace(' ', '_')}.png`}
-            className="text-green-500 hover:text-green-700"
+            onClick={(e) => {
+              e.preventDefault();
+              downloadImage(
+                `${API_BASE_URL}/${imagePath}`,
+                `${title.toLowerCase().replace(' ', '_')}.png`
+              );
+            }}
+            className="text-green-500 hover:text-green-700 cursor-pointer"
           >
-            Download
+            Download PNG
           </a>
+          {tiffFiles[title] && (
+            <a
+              target="_blank"
+              href={`${API_BASE_URL}/${tiffFiles[title]}`}
+              download={`${title.toLowerCase().replace(' ', '_')}.tif`}
+              className="text-purple-500 hover:text-purple-700"
+            >
+              Download TIFF
+            </a>
+          )}
         </div>
       </div>
     </div>
@@ -215,6 +246,26 @@ const ResultsPage = () => {
   const downloadAllMaps = () => {
     // Implement logic to download all maps
     console.log('Downloading all maps...');
+  };
+
+  const downloadImage = (imageUrl, fileName, width = 1200, height = 1000) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.src = imageUrl;
+
+    img.onload = function () {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = width;
+      canvas.height = height;
+
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const downloadLink = document.createElement('a');
+      downloadLink.download = fileName;
+      downloadLink.href = canvas.toDataURL('image/png');
+      downloadLink.click();
+    };
   };
 
   return (
@@ -276,15 +327,27 @@ const ResultsPage = () => {
                 Suitability Maps
               </button>
             </div>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search maps..."
-                className="pl-10 pr-4 py-2 border rounded-full"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-              <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <div className="flex items-center">
+              <div className="relative mr-4">
+                <input
+                  type="text"
+                  placeholder="Search maps..."
+                  className="pl-10 pr-4 py-2 border rounded-full"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              </div>
+              {excelReportPath && (
+                <a
+                  target="_blank"
+                  href={`${API_BASE_URL}/${excelReportPath}`}
+                  download="analysis_report.xlsx"
+                  className="flex items-center px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                >
+                  <FaFileExcel className="mr-2" /> Download Excel Report
+                </a>
+              )}
             </div>
           </div>
 
@@ -304,7 +367,7 @@ const ResultsPage = () => {
                 onClick={downloadAllMaps}
                 className="flex items-center px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
               >
-                <FaDownload className="mr-2" /> Download All
+                <FaDownload className="mr-2" /> Download All Maps
               </button>
             </div>
           )}
@@ -355,10 +418,7 @@ const ResultsPage = () => {
             </div>
             <div className="p-4">
               <img
-                src={`${API_BASE_URL}/${selectedMap.imagePath.replace(
-                  /\\/g,
-                  '/'
-                )}`}
+                src={`${API_BASE_URL}/${selectedMap.imagePath}`}
                 alt={selectedMap.title}
                 className="w-full h-auto"
               />
@@ -366,17 +426,31 @@ const ResultsPage = () => {
             <div className="p-4 border-t flex justify-end">
               <a
                 target="_blank"
-                href={`${API_BASE_URL}/${selectedMap.imagePath.replace(
-                  /\\/g,
-                  '/'
-                )}`}
-                download={`${selectedMap.title
-                  .toLowerCase()
-                  .replace(' ', '_')}.png`}
+                href={`${API_BASE_URL}/${selectedMap.imagePath}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  downloadImage(
+                    `${API_BASE_URL}/${imagePath}`,
+                    `${title.toLowerCase().replace(' ', '_')}.png`
+                  );
+                }}
                 className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 mr-2"
               >
-                Download
+                <FaFileImage className="mr-2 inline" />
+                Download PNG
               </a>
+              {tiffFiles[selectedMap.title] && (
+                <a
+                  href={`${API_BASE_URL}/${tiffFiles[selectedMap.title]}`}
+                  download={`${selectedMap.title
+                    .toLowerCase()
+                    .replace(' ', '_')}.tif`}
+                  className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 mr-2"
+                >
+                  <FaFileImage className="mr-2 inline" />
+                  Download TIFF
+                </a>
+              )}
               <button
                 onClick={() => setSelectedMap(null)}
                 className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
