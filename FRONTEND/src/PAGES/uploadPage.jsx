@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navbar from '../components/Navbar';
 import ResultsPage from '../PAGES/resultsPage';
 import axios from 'axios';
 import shp from 'shpjs';
 import MapVisualization from '../components/MapVisualizer';
+import SearchBar from '../components/searchBar';
 
 const dataTypes = [
   { key: 'area-of-interest', label: 'Area of Interest Shapefile' },
@@ -214,7 +215,19 @@ const DataTypeSection = ({
   );
 };
 
-const Sidebar = ({ activeSection, setActiveSection, data }) => {
+const Sidebar = ({
+  activeSection,
+  setActiveSection,
+  data,
+  searchTerm,
+  setSearchTerm,
+}) => {
+  const filteredDataTypes = useMemo(() => {
+    return dataTypes.filter((type) =>
+      type.label.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [searchTerm]);
+
   const isComplete = (type) => {
     if (type.key === 'land-use-raster') {
       return data[type.key].file;
@@ -222,12 +235,12 @@ const Sidebar = ({ activeSection, setActiveSection, data }) => {
     const section = data[type.key];
     return section.name && section.geojson;
   };
-
   return (
     <nav className="w-64 bg-gray-100 h-screen fixed left-0 top-16 p-4 overflow-auto">
       <h2 className="text-xl font-bold mb-4 text-gray-800">Data Types</h2>
+      <SearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
       <ul>
-        {dataTypes.map((type) => (
+        {filteredDataTypes.map((type) => (
           <li key={type.key} className="mb-2">
             <button
               onClick={() => setActiveSection(type.key)}
@@ -274,6 +287,7 @@ const UploadPage = () => {
       {}
     )
   );
+  const [searchTerm, setSearchTerm] = useState('');
 
   const handleUpload = async (dataTypeKey) => {
     const section = data[dataTypeKey];
@@ -343,6 +357,9 @@ const UploadPage = () => {
       : [section.geojson];
 
     const modifiedFeatures = features.map((feature) => {
+      if (!feature.properties) {
+        console.error(`Feature  has no properties:`, feature);
+      }
       return {
         name: section.name,
         bbox: feature.geometry.bbox || [],
@@ -353,7 +370,7 @@ const UploadPage = () => {
       };
     });
 
-    const chunkSize = 10;
+    const chunkSize = 20;
     const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
 
     for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
@@ -693,6 +710,8 @@ const UploadPage = () => {
           activeSection={activeSection}
           setActiveSection={setActiveSection}
           data={data}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
         />
         <div className="ml-64 flex-grow p-8">
           {activePage === 'upload' ? (
