@@ -49,14 +49,7 @@ const createSoils = async (req, res) => {
       const {
         type,
         geometry,
-        properties: {
-          objectId,
-          featureId,
-          gridcode,
-          shapeLeng,
-          shapeArea,
-          soilType,
-        },
+        properties: { soilType },
       } = feature;
 
       const bboxArray = geometry.bbox ? `{${geometry.bbox.join(',')}}` : 'NULL';
@@ -64,29 +57,19 @@ const createSoils = async (req, res) => {
       // Use raw SQL to handle geom field
       return prisma.$executeRaw`
         INSERT INTO "Soil" (
-          "type",
+
           "geometryType",
           "coordinates",
           "bbox",
-          "objectId",
-          "featureId",
-          "gridcode",
-          "shapeLeng",
-          "shapeArea",
+         
           "soilType",
           "geom",
           "createdAt",
           "updatedAt"
         ) VALUES (
-          ${type},
           ${geometry.type},
           ${JSON.stringify(geometry.coordinates)}::jsonb,
           ${bboxArray}::double precision[],
-          ${objectId},
-          ${featureId},
-          ${gridcode},
-          ${shapeLeng},
-          ${shapeArea},
           ${soilType},
           ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326),
           NOW(),
