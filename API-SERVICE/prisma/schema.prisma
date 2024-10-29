@@ -44,14 +44,9 @@ model Soil {
   bbox         Float[]
   coordinates  Json
   geometryType String
-  type         String
   name         String?
-  featureId    Int
-  gridcode     Int
-  objectId     Int
-  shapeArea    Float
-  shapeLeng    Float
   soilType     String
+  properties  Json?
   geom         Unsupported("geometry")?
 }
 
