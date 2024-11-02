@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
-import Navbar from '../components/Navbar';
+import Navbar from '../components/navbar';
 import ResultsPage from '../PAGES/resultsPage';
 import axios from 'axios';
 import shp from 'shpjs';
@@ -400,37 +400,68 @@ const UploadPage = () => {
     const features = Array.isArray(section.geojson.features)
       ? section.geojson.features
       : [section.geojson];
-    const modifiedFeatures = features.map((feature) => ({
-      type: feature.type,
-      geometry: {
-        type: feature.geometry.type,
-        coordinates: feature.geometry.coordinates,
-        bbox: feature.geometry.bbox,
-      },
-      properties: {
-        objectId: feature.properties.OBJECTID || feature.properties.objectId,
-        featureId: feature.properties.Id || feature.properties.featureId,
-        gridcode: feature.properties.gridcode,
-        shapeLeng:
-          feature.properties.Shape_Leng || feature.properties.shapeLeng,
-        shapeArea:
-          feature.properties.Shape_Area || feature.properties.shapeArea,
-        soilType: feature.properties.soil_type || feature.properties.soilType,
-      },
-    }));
-    const payload = { features: modifiedFeatures };
+    console.log('Original features:', JSON.stringify(features[0], null, 2)); //
+    const modifiedFeatures = features.map((feature) => {
+      // Extract the geometry and properties
+      const geometry = feature.geometry;
+      const properties = feature.properties;
 
-    setMessage('Uploading Soils data...');
-    const response = await axios.post(
-      'http://localhost:3000/api/soils',
-      payload,
-      {
-        headers: { 'Content-Type': 'application/json' },
+      // Create the payload structure similar to geology
+      return {
+        name: section.name,
+        geometry: {
+          type: geometry.type,
+          coordinates: geometry.coordinates,
+          bbox: geometry.bbox || [],
+        },
+        bbox: geometry.bbox || [],
+        properties: {
+          ...properties,
+          soilType: properties.FAOSOIL || properties.soilType,
+        },
+      };
+    });
+
+    // Upload features in chunks
+    const chunkSize = 20;
+    const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
+
+    for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
+      const chunk = modifiedFeatures.slice(i, i + chunkSize);
+
+      setMessage(
+        `Uploading Soils data: chunk ${
+          Math.floor(i / chunkSize) + 1
+        } of ${totalChunks}...`
+      );
+
+      try {
+        const response = await axios.post(
+          'http://localhost:3000/api/soils',
+          chunk,
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+        console.log(
+          `Soils chunk ${Math.floor(i / chunkSize) + 1} upload response:`,
+          response.data
+        );
+      } catch (error) {
+        console.error(
+          `Error uploading Soils chunk ${Math.floor(i / chunkSize) + 1}:`,
+          error.response ? error.response.data : error.message
+        );
+        throw new Error(
+          `Failed to upload Soils chunk ${Math.floor(i / chunkSize) + 1}: ${
+            error.message
+          }`
+        );
       }
-    );
-    console.log('Soils upload response:', response.data);
-  };
+    }
 
+    setMessage('Soils data uploaded successfully!');
+  };
   const uploadAreaOfInterest = async (section) => {
     const feature =
       section.geojson.type === 'Feature'

@@ -3,47 +3,38 @@ from tabulate import tabulate
 
 def calculate_weights():
     """
-    Calculate weights for landfill site suitability criteria using AHP with whole numbers.
+    Calculate weights for landfill site suitability criteria using AHP with Saaty's scale.
     """
     # Define the criteria based on the provided datasets
-    
-    
     criteria = [
-        'Slope',
         'River',
-        'Geology',
+        'Road',
+        'Settlement',
         'Soil',
         'Protected Areas',
-        'Settlement',
-        'Road',
-        'Land Use'
+        'Land Use',
+        'Slope'
     ]
     n = len(criteria)
     
-    # Whole number-based pairwise comparison matrix following Saaty's scale (1, 3, 5, 7, 9)
-    # The matrix reflects the relative importance of each criterion compared to others
-    # Values above 1 indicate higher importance, reciprocals below 1 indicate lower importance
-    
+    # Pairwise comparison matrix using Saaty's scale (1-9)
     matrix = np.array([
-        [1,      3,      3,      5,      5,      7,      9,      9],  # Slope
-        [1/3,    1,      1,      3,      3,      5,      7,      7],  # River
-        [1/3,    1,      1,      3,      3,      5,      7,      7],  # Geology
-        [1/5,    1/3,    1/3,    1,      1,      3,      5,      5],  # Soil
-        [1/5,    1/3,    1/3,    1,      1,      3,      5,      5],  # Protected Areas
-        [1/7,    1/5,    1/5,    1/3,    1/3,    1,      3,      3],  # Settlement
-        [1/9,    1/7,    1/7,    1/5,    1/5,    1/3,    1,      1],  # Road
-        [1/9,    1/7,    1/7,    1/5,    1/5,    1/3,    1,      1]   # Land Use
+        [1,    2,    3,    5,    7,    8,    9],    # River
+        [1/2,  1,    2,    4,    6,    7,    8],    # Road
+        [1/3,  1/2,  1,    3,    5,    6,    7],    # Settlement
+        [1/5,  1/4,  1/3,  1,    3,    4,    5],    # Soil
+        [1/7,  1/6,  1/5,  1/3,  1,    2,    3],    # Protected Areas
+        [1/8,  1/7,  1/6,  1/4,  1/2,  1,    2],    # Land Use
+        [1/9,  1/8,  1/7,  1/5,  1/3,  1/2,  1]     # Slope
     ])
     
     print("Pairwise Comparison Matrix:")
     print(tabulate(matrix, headers=criteria, showindex=criteria, tablefmt="grid"))
 
-    # Calculate weights using the eigenvector method
-    eigenvalues, eigenvectors = np.linalg.eig(matrix)
-    max_index = np.argmax(eigenvalues.real)
-    weights = eigenvectors[:, max_index].real
-    weights = weights / np.sum(weights)
-
+    # Calculate weights using the geometric mean method
+    geometric_mean = np.prod(matrix, axis=1) ** (1/n)
+    weights = geometric_mean / np.sum(geometric_mean)
+    
     # Convert weights to percentages
     weights_percent = weights * 100
 
@@ -65,14 +56,14 @@ def calculate_consistency_ratio(matrix, weights):
     consistency_index = (lambda_max - n) / (n - 1)
 
     # Random Index (RI) values for different n
-    random_index = {3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24,
-                   7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49}
-    ri = random_index.get(n, 1.49)  # Default to 1.49 if n > 10
+    random_index = {1: 0, 2: 0, 3: 0.58, 4: 0.90, 5: 1.12, 
+                   6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49}
+    ri = random_index.get(n, 1.49)
 
     # Consistency Ratio (CR)
     consistency_ratio = consistency_index / ri
 
-    return consistency_ratio
+    return consistency_ratio, consistency_index, lambda_max
 
 def main():
     weights, matrix = calculate_weights()
@@ -87,9 +78,13 @@ def main():
     normalized_weights = np.array([weight / 100 for weight in weights.values()])
 
     # Calculate and print the Consistency Ratio
-    consistency_ratio = calculate_consistency_ratio(matrix, normalized_weights)
-    print(f"\nConsistency Ratio: {consistency_ratio:.4f}")
-    if consistency_ratio < 0.1:
+    cr, ci, lambda_max = calculate_consistency_ratio(matrix, normalized_weights)
+    print(f"\nConsistency Measures:")
+    print(f"Lambda max: {lambda_max:.4f}")
+    print(f"Consistency Index (CI): {ci:.4f}")
+    print(f"Consistency Ratio (CR): {cr:.4f}")
+    
+    if cr < 0.1:
         print("The pairwise comparison matrix is consistent (CR < 0.1).")
     else:
         print("Warning: The pairwise comparison matrix is not consistent (CR >= 0.1).")

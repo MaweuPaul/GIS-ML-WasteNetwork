@@ -38,16 +38,17 @@ model AreaOfInterest {
 }
 
 model Soil {
-  id           Int                      @id @default(autoincrement())
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  bbox         Float[]
-  coordinates  Json
-  geometryType String
-  name         String?
+  id           Int       @id @default(autoincrement())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
   soilType     String
-  properties  Json?
-  geom         Unsupported("geometry")?
+  properties   Json?
+  geometryType String    @default("MultiPolygon")
+  coordinates  Json
+  bbox         Float[]
+  geom         Unsupported("geometry(MultiPolygon,4326)")
+
+  @@index([geom], type: Gist)
 }
 
 model DigitalElevationModel {
@@ -128,14 +129,115 @@ model Settlement {
 
   @@index([geom])
 }
-   model LandUseRaster {
+model LandUseRaster {
      id          Int      @id @default(autoincrement())
      description String
      raster      Bytes
      createdAt   DateTime @default(now())
      updatedAt   DateTime @updatedAt
-   }
+}
 
+enum UserRole {
+  ADMIN
+  COLLECTOR
+  SUPERVISOR
+  RESIDENT
+}
+
+
+
+model IncidentReport {
+  id            Int           @id @default(autoincrement())
+  type          IncidentType
+  description   String
+  priority      IssuePriority @default(MEDIUM)
+  status        IncidentStatus  @default(PENDING)
+  location      Json
+  geom          Unsupported("geometry(Point,4326)")
+  photos        String[]
+  contactName   String
+  contactPhone  String
+  contactEmail  String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([geom], type: Gist)
+}
+
+enum IncidentType {
+  ILLEGAL_DUMPING
+  OVERFLOWING_BIN
+  MISSED_COLLECTION
+  DAMAGED_BIN
+  HAZARDOUS_WASTE
+  OTHER
+}
+
+enum IncidentStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum IssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+
+
+model CollectionSchedule {
+  id          Int       @id @default(autoincrement())
+  area        String
+  dayOfWeek   Int       // 0-6 (Sunday-Saturday)
+  timeSlot    String    // e.g., "09:00-12:00"
+  wasteType   WasteType
+  route       Json?     // GeoJSON for route
+  geom        Unsupported("geometry(LineString,4326)")? // Using PostGIS for route
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([geom], type: Gist)
+}
+
+model SpecialPickup {
+  id            Int          @id @default(autoincrement())
+  type          WasteType
+  quantity      String
+  description   String
+  status        PickupStatus @default(PENDING)
+  preferredDate DateTime
+  preferredTime String
+  location      Json         // { lat: number, lng: number }
+  geom          Unsupported("geometry(Point,4326)")? // Using PostGIS for location
+  photos        String[]     // Array of photo URLs
+  contactName   String
+  contactPhone  String
+  contactEmail  String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([geom], type: Gist)
+}
+
+enum WasteType {
+  GENERAL
+  RECYCLABLE
+  ORGANIC
+  HAZARDOUS
+  E_WASTE
+}
+
+enum PickupStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model spatial_ref_sys {
   srid      Int     @id

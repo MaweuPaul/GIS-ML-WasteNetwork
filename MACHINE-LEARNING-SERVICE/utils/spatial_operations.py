@@ -31,6 +31,11 @@ import numpy.ma as ma
 import rasterio.warp
 from waste_collection_optimization import optimize_waste_collection
 from scipy.ndimage import sobel
+from matplotlib.lines import Line2D
+
+
+# Method 2: Import as mlines (more common)
+import matplotlib.lines as mlines
 
 
 # Import the grid analysis functions
@@ -54,27 +59,97 @@ BUFFER_COLORS = {
 def river_suitability_mapping(distance):
     if pd.isna(distance):
         return np.nan
-    if distance <= 200:
+    if distance <= 300:
         return 1  # Not suitable
-    elif 200 < distance <= 500:
+    elif 300 < distance <= 1000:
         return 2  # Less suitable
-    elif 500 < distance <= 1000:
-        return 3  # Moderately Suitable
     elif 1000 < distance <= 1500:
+        return 3  # Moderately suitable
+    elif 1500 < distance <= 2000:
         return 4  # Suitable
     else:
         return 5  # Highly suitable
 
-def residential_area_suitability_mapping(distance):
-    return river_suitability_mapping(distance)
+def road_suitability_mapping(distance):
+    if pd.isna(distance):
+        return np.nan
+    if distance > 1200:
+        return 1  # Not suitable
+    elif 1000 < distance <= 1200:
+        return 2  # Less suitable
+    elif 800 < distance <= 1000:
+        return 3  # Moderately suitable
+    elif 400 < distance <= 800:
+        return 4  # Suitable
+    else:
+        return 5  # Highly suitable
 
+def settlement_suitability_mapping(distance):
+    if pd.isna(distance):
+        return np.nan
+    if distance <= 400:
+        return 1  # Not suitable
+    elif 400 < distance <= 900:
+        return 2  # Less suitable
+    elif 1500 < distance <= 2100:
+        return 3  # Moderately suitable
+    elif distance > 2100:
+        return 4  # Suitable
+    else:
+        return 5  # Highly suitable
+
+def protectedarea_suitability_mapping(distance):
+    if pd.isna(distance):
+        return np.nan
+    if distance <= 300:
+        return 1  # Not suitable
+    elif 300 < distance <= 1000:
+        return 2  # Less suitable
+    elif 1500 < distance <= 2000:
+        return 3  # Moderately suitable
+    elif 2000 < distance <= 2500:
+        return 4  # Suitable
+    else:
+        return 5  # Highly suitable
+
+def slope_suitability_mapping(slope_degree):
+    if pd.isna(slope_degree):
+        return np.nan
+    if slope_degree > 18.6:
+        return 1  # Not suitable
+    elif 5.3 < slope_degree <= 18.6:
+        return 2  # Less suitable
+    elif 3.1 < slope_degree <= 5.2:
+        return 3  # Moderately suitable
+    elif 1.7 < slope_degree <= 3:
+        return 4  # Suitable
+    else:
+        return 5  # Highly suitable
+
+def land_use_suitability_mapping(land_use):
+    if pd.isna(land_use) or land_use is None:
+        return np.nan  # No data
+    if 'forests' in land_use or 'settlements' in land_use:
+        return 1  # Not suitable
+    elif 'farmlands' in land_use:
+        return 4  # Suitable
+    elif 'bareland' in land_use:
+        return 5  # Highly suitable
+    else:
+        return 2  # Less 
 def soil_suitability_mapping(soil_type):
     if pd.isna(soil_type) or soil_type is None:
         return np.nan  # No data
+    
     soil_type = str(soil_type).lower()
+    
     if 'sand' in soil_type:
         return 1  # Not suitable
-    elif 'loam' in soil_type:
+    elif 'calcic cambisols' in soil_type or 'Bk' in soil_type:
+        return 2  # Less suitable
+    elif 'eutric nitosols' in soil_type or 'Ne' in soil_type:
+        return 3  # Moderately suitable
+    elif 'humic nitosols' in soil_type or 'Nh' in soil_type:
         return 2  # Less suitable
     elif 'silt' in soil_type:
         return 4  # Suitable
@@ -83,75 +158,19 @@ def soil_suitability_mapping(soil_type):
     else:
         return 3  # Moderately suitable
 
-def road_suitability_mapping(distance):
-    if pd.isna(distance):
-        return np.nan
-    if distance <= 200:
-        return 1  # Not suitable
-    elif 200 < distance <= 500:
-        return 3  # Moderately suitable
-    elif 500 < distance <= 1000:
-        return 5  # Highly suitable
-    elif 1000 < distance <= 1500:
-        return 4  # Suitable
-    else:
-        return 2  # Less suitable
-
-def settlement_suitability_mapping(distance):
-    return river_suitability_mapping(distance)
-
-def protectedarea_suitability_mapping(distance):
-    if pd.isna(distance):
-        return np.nan
-    if distance <= 200:
-        return 1  # Not suitable
-    elif 200 < distance <= 500:
-        return 2  # Less suitable
-    elif 500 < distance <= 1000:
-        return 3  # Moderately Suitable
-    elif 1000 < distance <= 1500:
-        return 4  # Suitable
-    else:
-        return 5  # Highly suitable
-
-def geology_suitability_mapping(geology_type):
-    if pd.isna(geology_type) or geology_type is None:
-        return np.nan  # No data
-    geology_type = str(geology_type).lower()
-    if geology_type == 'ti':
-        return 3  # Suitable
-    elif geology_type == 'qv':
-        return 4  # Highly suitable
-    elif geology_type == 'qc':
-        return 2  # Moderately suitable
-    else:
-        return 1  # Not suitable
-
-def slope_suitability_mapping(slope_degree):
-    if pd.isna(slope_degree):
-        return np.nan
-    if slope_degree <= 5:
-        return 5  # Highly suitable (0-5 degrees)
-    elif 5 < slope_degree <= 10:
-        return 4  # Highly suitable (5-10 degrees)
-    elif 10 < slope_degree <= 15:
-        return 3  # Suitable (10-15 degrees)
-    elif 15 < slope_degree <= 20:
-        return 2  # Moderately suitable (15-20 degrees)
-    else:
-        return 1  # Not suitable (>20 degrees)
-
-def land_use_suitability_mapping(land_use):
-    if pd.isna(land_use) or land_use is None:
-        return np.nan  # No data
-    if 'forests' in land_use:
-                return 1  # Not suitable
-    elif 'bareland' in land_use:
-                return 5  # Highly suitable
-    elif 'buildup' in land_use:
-                return 2  # Less suitable
-    elif 'farmland' in land_use:
-                return 4  # Suitable
+        
+# def geology_suitability_mapping(geology_type):
+#     if pd.isna(geology_type) or geology_type is None:
+#         return np.nan  # No data
+#     geology_type = str(geology_type).lower()
+#     if geology_type == 'ti':
+#         return 3  # Suitable
+#     elif geology_type == 'qv':
+#         return 4  # Highly suitable
+#     elif geology_type == 'qc':
+#         return 2  # Moderately suitable
+#     else:
+#         return 1  # Not suitable
 
 def reclassify_suitability(suitability_scores):
     reclassified = np.full_like(suitability_scores, np.nan, dtype=np.float32)
@@ -206,81 +225,126 @@ def create_scale_bar(ax, length=10, units='km', subdivisions=5):
     ax.set_ylim(-0.5, 1)
     ax.axis('off')
 
+
 def create_suitability_map(data, title, output_path, transform, crs, nyeri_gdf, plot_boundary=True):
-    # Mask the data with the Nyeri boundary
-    masked_data, masked_transform = mask_raster_with_boundary(data, transform, nyeri_gdf)
-    
-    fig, ax = plt.subplots(figsize=(14, 14))
-    
-    # Define color scheme
-    cmap = colors.ListedColormap(['purple', 'red', 'yellow', 'lightgreen', 'darkgreen'])
-    norm = colors.BoundaryNorm([1, 2, 3, 4, 5, 6], cmap.N)
-    
-    # Add transparency for no data
-    cmap.set_bad(color='white', alpha=0)
-    
-    extent = plotting_extent(masked_data, masked_transform)
-    im = ax.imshow(masked_data, cmap=cmap, norm=norm, extent=extent)
-    
-    # Plot Nyeri boundary only if plot_boundary is True
-    if plot_boundary:
-        nyeri_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1, label='Nyeri Boundary')
-    
-    # Set title with adjusted y position
-    ax.set_title(f'{title}', fontsize=18, fontweight='bold', y=1.05)
-    
-    ax.set_xlabel('Easting (meters)', fontsize=12)
-    ax.set_ylabel('Northing (meters)', fontsize=12)
-    
-    # Add north arrow
-    ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction', 
-                horizontalalignment='center', verticalalignment='center',
-                fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="w")])
-    ax.arrow(0.98, 0.96, 0, 0.02, head_width=0.01, head_length=0.01, 
-             fc='k', ec='k', transform=ax.transAxes)
-    
-    # Set gridlines and ticks on all four sides
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0f}'))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0f}'))
-    ax.tick_params(axis='both', which='major', labelsize=10)
-    ax.tick_params(top=True, bottom=True, left=True, right=True, labeltop=True, labelbottom=True, labelleft=True, labelright=True)
-    
-    # Adjust layout
-    plt.tight_layout()
-    
-    # Create new axes for the bottom row
-    bottom_ax = fig.add_axes([0.1, 0.02, 0.8, 0.15])
-    bottom_ax.axis('off')
-    
-    # Add legend
-    legend_elements = [
-        mpatches.Patch(color='purple', label='Not suitable'),
-        mpatches.Patch(color='red', label='Less suitable'),
-        mpatches.Patch(color='yellow', label='Moderately suitable'),
-        mpatches.Patch(color='lightgreen', label='Suitable'),
-        mpatches.Patch(color='darkgreen', label='Highly suitable')
-    ]
-    legend = bottom_ax.legend(handles=legend_elements, loc='center left', fontsize=10, bbox_to_anchor=(0, 0.5))
-    
-    # Add custom scale bar
-    scale_ax = fig.add_axes([0.4, 0.05, 0.2, 0.03])  # Adjust position as needed
-    create_scale_bar(scale_ax, length=10, units='km', subdivisions=5)
-    
-    # Add map information
-    info_text = 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960'
-    bottom_ax.text(1, 0.5, info_text, ha='right', va='center', fontsize=10, transform=bottom_ax.transAxes)
-    
-    # Adjust subplot to make room for title and bottom information
-    plt.subplots_adjust(top=0.95, bottom=0.2)
-    
-    # Add neatline
-    for spine in ax.spines.values():
-        spine.set_edgecolor('black')
-        spine.set_linewidth(2)
-    
-    plt.savefig(output_path, dpi=300, bbox_inches='tight', pad_inches=0.5, facecolor='white', edgecolor='black')
-    plt.close(fig)
+    try:
+        # Mask the data with the Nyeri boundary
+        masked_data, masked_transform = mask_raster_with_boundary(data, transform, nyeri_gdf)
+        fig, ax = plt.subplots(figsize=(14, 14))
+        # Define color scheme
+        cmap = colors.ListedColormap(['purple', 'red', 'yellow', 'lightgreen', 'darkgreen'])
+        norm = colors.BoundaryNorm([1, 2, 3, 4, 5, 6], cmap.N)
+        # Add transparency for no data
+        cmap.set_bad(color='white', alpha=0)
+        extent = plotting_extent(masked_data, masked_transform)
+        im = ax.imshow(masked_data, cmap=cmap, norm=norm, extent=extent)
+        # Plot roads if title contains "road"
+        if 'road' in title.lower():
+            try:
+
+                connection_params = {
+                    'dbname': 'GEGIS2',
+                    'user': '****',
+                    'password': '****',
+                    'host': 'localhost',
+                    'port': '5432'
+                }
+                
+                #  connection string
+                conn_string = f"postgresql://{connection_params['user']}:{connection_params['password']}@{connection_params['host']}:{connection_params['port']}/{connection_params['dbname']}"
+                
+                # Query to fetch roads
+                query = 'SELECT geom FROM "Road"'
+                with create_engine(conn_string).connect() as conn:
+                    roads_gdf = gpd.read_postgis(query, conn, geom_col='geom')
+                
+                # Reproject roads to match the map CRS
+                roads_gdf = roads_gdf.to_crs(crs)
+                
+                # Plot roads with a distinctive style
+                roads_gdf.plot(ax=ax, color='black', linewidth=0.8, 
+                             alpha=0.7, label='Roads',
+                             zorder=5)  # zorder ensures roads are plotted on top
+            except Exception as e:
+                print(f"Error plotting roads: {e}")
+                traceback.print_exc()
+        
+        # Plot Nyeri boundary only if plot_boundary is True
+        if plot_boundary:
+            nyeri_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1, label='Nyeri Boundary')
+        
+        # Set title with adjusted y position
+        ax.set_title(f'{title}', fontsize=18, fontweight='bold', y=1.05)
+        
+        ax.set_xlabel('Easting (meters)', fontsize=12)
+        ax.set_ylabel('Northing (meters)', fontsize=12)
+        
+        # Add north arrow
+        ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction', 
+                    horizontalalignment='center', verticalalignment='center',
+                    fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="w")])
+        ax.arrow(0.98, 0.96, 0, 0.02, head_width=0.01, head_length=0.01, 
+                 fc='k', ec='k', transform=ax.transAxes)
+        
+        # Set gridlines and ticks
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0f}'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0f}'))
+        ax.tick_params(axis='both', which='major', labelsize=10)
+        ax.tick_params(top=True, bottom=True, left=True, right=True, 
+                      labeltop=True, labelbottom=True, labelleft=True, labelright=True)
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        # Create new axes for the bottom row
+        bottom_ax = fig.add_axes([0.1, 0.02, 0.8, 0.15])
+        bottom_ax.axis('off')
+        
+        # Create legend elements
+        legend_elements = [
+            mpatches.Patch(color='purple', label='Not suitable'),
+            mpatches.Patch(color='red', label='Less suitable'),
+            mpatches.Patch(color='yellow', label='Moderately suitable'),
+            mpatches.Patch(color='lightgreen', label='Suitable'),
+            mpatches.Patch(color='darkgreen', label='Highly suitable')
+        ]
+        
+        # Add roads to legend if they were plotted
+        if 'road' in title.lower():
+            legend_elements.append(mlines.Line2D([], [], color='black', 
+                                               linewidth=1, label='Roads'))
+        
+        # Add legend
+        legend = bottom_ax.legend(handles=legend_elements, 
+                                loc='center left', 
+                                fontsize=10, 
+                                bbox_to_anchor=(0, 0.5))
+        
+        # Add scale bar
+        scale_ax = fig.add_axes([0.4, 0.05, 0.2, 0.03])
+        create_scale_bar(scale_ax, length=10, units='km', subdivisions=5)
+        
+        # Add map information
+        info_text = 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960'
+        bottom_ax.text(1, 0.5, info_text, ha='right', va='center', fontsize=10, transform=bottom_ax.transAxes)
+        
+        # Adjust subplot to make room for title and bottom information
+        plt.subplots_adjust(top=0.95, bottom=0.2)
+        
+        # Add neatline
+        for spine in ax.spines.values():
+            spine.set_edgecolor('black')
+            spine.set_linewidth(2)
+        
+        # Save the figure
+        plt.savefig(output_path, dpi=300, bbox_inches='tight', pad_inches=0.5, 
+                   facecolor='white', edgecolor='black')
+        plt.close(fig)
+        
+    except Exception as e:
+        print(f"Error in create_suitability_map: {e}")
+        traceback.print_exc()
 
 def emit_progress(session_id, message, socketio):
     try:
@@ -626,38 +690,35 @@ def process_landuse_suitability(landuse_raster, land_use_types, session_id, sock
 
 def calculate_weights():
     criteria = [
-        'Slope',
         'River',
-        'Geology',
+        'Road',
+        'Settlement',
         'Soil',
         'Protected Areas',
-        'Settlement',
-        'Road',
-        'Land Use'
+        'Land Use',
+        'Slope'
     ]
     
-    # Pre-calculated weights from your AHP analysis
+    # Pre-calculated weights from our AHP analysis
     weights_dict = {
-        'Slope': 36.65,
-        'Buffer_River': 18.54,
-        'Geology': 18.54,
-        'Soil': 8.71,
-        'Buffer_ProtectedArea': 8.71,
-        'Buffer_Settlement': 4.35,
-        'Buffer_Road': 2.25,
-        'LandUse': 2.25
+        'River': 36.54,
+        'Road': 25.86,
+        'Settlement': 17.97,
+        'Soil': 9.24,
+        'Protected Areas': 4.75,
+        'Land Use': 3.30,
+        'Slope': 2.34
     }
     
-    # Pairwise comparison matrix (keep this for consistency checking)
+    # Updated pairwise comparison matrix
     matrix = np.array([
-        [1,      3,      3,      5,      5,      7,      9,      9],  # Slope
-        [1/3,    1,      1,      3,      3,      5,      7,      7],  # River
-        [1/3,    1,      1,      3,      3,      5,      7,      7],  # Geology
-        [1/5,    1/3,    1/3,    1,      1,      3,      5,      5],  # Soil
-        [1/5,    1/3,    1/3,    1,      1,      3,      5,      5],  # Protected Areas
-        [1/7,    1/5,    1/5,    1/3,    1/3,    1,      3,      3],  # Settlement
-        [1/9,    1/7,    1/7,    1/5,    1/5,    1/3,    1,      1],  # Road
-        [1/9,    1/7,    1/7,    1/5,    1/5,    1/3,    1,      1]   # Land Use
+        [1,    2,    3,    5,    7,    8,    9],    # River
+        [1/2,  1,    2,    4,    6,    7,    8],    # Road
+        [1/3,  1/2,  1,    3,    5,    6,    7],    # Settlement
+        [1/5,  1/4,  1/3,  1,    3,    4,    5],    # Soil
+        [1/7,  1/6,  1/5,  1/3,  1,    2,    3],    # Protected Areas
+        [1/8,  1/7,  1/6,  1/4,  1/2,  1,    2],    # Land Use
+        [1/9,  1/8,  1/7,  1/5,  1/3,  1/2,  1]     # Slope
     ])
 
     return weights_dict, matrix
@@ -665,21 +726,24 @@ def calculate_weights():
 def calculate_consistency_ratio(matrix, weights):
     try:
         n = matrix.shape[0]
-        weighted_sum = np.dot(matrix, weights)
-        lambda_max = np.sum(weighted_sum / weights) / n
+        # Convert weights dictionary values to array in the same order as matrix
+        weights_array = np.array(list(weights.values())) / 100  # Convert percentages to decimals
+        
+        weighted_sum = np.dot(matrix, weights_array)
+        lambda_max = np.sum(weighted_sum / weights_array) / n
 
         consistency_index = (lambda_max - n) / (n - 1)
 
-        random_index = {3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24,
-        7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49}
-        ri = random_index.get(n, 1.49)  # Default to 1.49 if n > 10
+        random_index = {1: 0, 2: 0, 3: 0.58, 4: 0.90, 5: 1.12, 
+                       6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49}
+        ri = random_index.get(n, 1.49)
 
         consistency_ratio = consistency_index / ri
 
-        return consistency_ratio
+        return consistency_ratio, consistency_index, lambda_max
     except Exception as e:
         print(f"Error calculating consistency ratio: {e}")
-        return None
+        return None, None, None
 
 def rasterize_buffers(gdf, buffers, transform, shape, suitability_mapping, distances, session_id, socketio):
     try:
@@ -817,25 +881,31 @@ def run_full_spatial_operations(engine, session_id, socketio):
         if nyeri_gdf is None:
             raise ValueError("Nyeri boundary could not be fetched.")
         
-        # Calculate weights using AHP
+    # Calculate weights using AHP
         weights_dict, matrix = calculate_weights()
         emit_progress(session_id, f"AHP Weights calculated: {weights_dict}", socketio)
-        
+         
         # Check consistency of AHP matrix
-        consistency_ratio = calculate_consistency_ratio(matrix, np.array(list(weights_dict.values())))
-        emit_progress(session_id, f"Consistency Ratio: {consistency_ratio:.4f}", socketio)
-        if consistency_ratio < 0.1:
-            emit_progress(session_id, "AHP matrix is consistent (CR < 0.1).", socketio)
+        consistency_ratio, consistency_index, lambda_max = calculate_consistency_ratio(matrix, weights_dict)
+        if consistency_ratio is not None:
+            emit_progress(session_id, f"Consistency Ratio: {consistency_ratio:.4f}", socketio)
+            emit_progress(session_id, f"Consistency Index: {consistency_index:.4f}", socketio)
+            emit_progress(session_id, f"Lambda Max: {lambda_max:.4f}", socketio)
+    
+            if consistency_ratio < 0.1:
+               emit_progress(session_id, "AHP matrix is consistent (CR < 0.1).", socketio)
+            else:
+                emit_progress(session_id, "Warning: The pairwise comparison matrix is not consistent (CR >= 0.1).", socketio)
+                emit_progress(session_id, "Please revise the comparison matrix to improve consistency.", socketio)
         else:
-            emit_progress(session_id, "Warning: The pairwise comparison matrix is not consistent (CR >= 0.1).", socketio)
-            emit_progress(session_id, "Please revise the comparison matrix to improve consistency.", socketio)
-        
+            emit_error(session_id, "Could not calculate consistency ratio.", socketio)
+                
         # Define feature types and buffer distances
         feature_types = [
-            ('River', [200, 500, 1000, 1500]),
-            ('Road', [200, 500, 1000, 1500]),
-            ('ProtectedArea', [200, 500, 1000, 1500]),
-            ('Settlement', [200, 500, 1000, 1500])
+            ('River', [300, 1000, 1500, 2000]),
+            ('Road', [400, 800, 1000, 1200]),
+            ('ProtectedArea', [300, 1000, 1500, 2000, 2500]),
+            ('Settlement', [400, 900, 1500, 2100])
         ]
         
         all_buffers = []
@@ -992,7 +1062,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
             emit_error(session_id, "DEM data could not be fetched or processed.", socketio)
         
         # Process geology and soil data
-        geology_gdf = fetch_and_classify_vector('Geology', geology_suitability_mapping, engine, session_id, socketio, nyeri_gdf)
+        # geology_gdf = fetch_and_classify_vector('Geology', geology_suitability_mapping, engine, session_id, socketio, nyeri_gdf)
         soil_gdf = fetch_and_classify_vector('Soil', soil_suitability_mapping, engine, session_id, socketio, nyeri_gdf)
         
         # Process land use data
@@ -1051,22 +1121,22 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 except Exception as e:
                     emit_error(session_id, f"Error rasterizing {feature_type} buffer: {str(e)}", socketio)
 
-            # Rasterize geology and soil layers
-            if geology_gdf is not None:
-                try:
-                    geology_raster = rasterize(
-                        [(geom, value) for geom, value in zip(geology_gdf.geometry, geology_gdf.suitability_score)],
-                        out_shape=(rows, cols),
-                        transform=transform,
-                        fill=np.nan,
-                        dtype='float32'
-                    )
-                    geology_tif_path = os.path.join("output", 'geology.tif')
-                    save_raster_as_tif(geology_raster, transform, NYERI_CRS, geology_tif_path, session_id, socketio)
-                    layers['Geology'] = {'path': geology_tif_path}
-                    emit_progress(session_id, "Rasterized Geology layer", socketio)
-                except Exception as e:
-                    emit_error(session_id, f"Error rasterizing Geology layer: {str(e)}", socketio)
+            # # Rasterize geology and soil layers
+            # if geology_gdf is not None:
+            #     try:
+            #         geology_raster = rasterize(
+            #             [(geom, value) for geom, value in zip(geology_gdf.geometry, geology_gdf.suitability_score)],
+            #             out_shape=(rows, cols),
+            #             transform=transform,
+            #             fill=np.nan,
+            #             dtype='float32'
+            #         )
+            #         geology_tif_path = os.path.join("output", 'geology.tif')
+            #         save_raster_as_tif(geology_raster, transform, NYERI_CRS, geology_tif_path, session_id, socketio)
+            #         layers['Geology'] = {'path': geology_tif_path}
+            #         emit_progress(session_id, "Rasterized Geology layer", socketio)
+            #     except Exception as e:
+            #         emit_error(session_id, f"Error rasterizing Geology layer: {str(e)}", socketio)
 
             if soil_gdf is not None:
                 try:

@@ -12,13 +12,36 @@ const settlementRoutes = require('./Routes/settlementRoute.js');
 const geologyRoutes = require('./Routes/geologyRoute.js');
 const databaseRoutes = require('./Routes/databaseRoutes.js');
 const dataRoutes = require('./Routes/dataRoutes.js');
+const specialPickupRoutes = require('./Routes/specialPickupRoutes.js');
+const reportIncidence = require('./Routes/reportIssueRoute.js');
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+// Allow multiple origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+  })
+);
 
 // Increase JSON payload limit to 50MB
 app.use(express.json({ limit: '50mb' }));
@@ -35,6 +58,8 @@ app.use('/api/settlement', settlementRoutes);
 app.use('/api/database', databaseRoutes);
 app.use('/api/geology', geologyRoutes);
 app.use('/api/data', dataRoutes);
+app.use('/api/specialPickup', specialPickupRoutes);
+app.use('/api/incidents', reportIncidence);
 
 // Catch-all route for API
 app.use('/api/*', (req, res) => {
