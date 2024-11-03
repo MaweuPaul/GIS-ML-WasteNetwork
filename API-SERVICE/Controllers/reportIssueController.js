@@ -76,7 +76,6 @@ const incidentController = {
     }
   },
 
-  // Update the getAllIncidents function as well
   getAllIncidents: async (req, res) => {
     try {
       const { type, status, priority, page = 1, limit = 10 } = req.query;
@@ -122,14 +121,17 @@ const incidentController = {
         ${Prisma.raw(whereClause)};
       `;
 
+      // Modified response structure to match frontend expectations
       res.json({
-        data: incidents,
-        pagination: {
-          total: parseInt(totalCount[0].count),
-          page: parseInt(page),
-          limit: parseInt(limit),
-          pages: Math.ceil(parseInt(totalCount[0].count) / limit),
-        },
+        incidents: incidents.map((incident) => ({
+          ...incident,
+          location: {
+            lat: incident.location.lat,
+            lng: incident.location.lng,
+          },
+        })),
+        total: parseInt(totalCount[0].count),
+        totalPages: Math.ceil(parseInt(totalCount[0].count) / limit),
       });
     } catch (error) {
       console.error('Error fetching incidents:', error);
@@ -177,14 +179,41 @@ const incidentController = {
       const { id } = req.params;
       const { status } = req.body;
 
-      const incident = await prisma.incidentReport.update({
-        where: { id: parseInt(id) },
-        data: { status },
-      });
+      // Validate status
+      const validStatuses = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Invalid status value' });
+      }
 
-      res.json(incident);
+      const incident = await prisma.$queryRaw`
+        UPDATE "IncidentReport"
+        SET 
+          status = ${status}::"IncidentStatus",
+          "updatedAt" = NOW()
+        WHERE id = ${parseInt(id)}
+        RETURNING 
+          id,
+          type,
+          description,
+          priority,
+          status,
+          location,
+          ST_AsText(geom) as geom,
+          photos,
+          "contactName",
+          "contactPhone",
+          "contactEmail",
+          "createdAt",
+          "updatedAt"
+      `;
+
+      if (!incident[0]) {
+        return res.status(404).json({ error: 'Incident not found' });
+      }
+
+      res.json(incident[0]);
     } catch (error) {
-      console.error('Error updating incident:', error);
+      console.error('Error updating incident status:', error);
       res.status(400).json({ error: error.message });
     }
   },
@@ -231,7 +260,6 @@ const incidentController = {
     }
   },
 
-  // Delete incident with file cleanup
   deleteIncident: async (req, res) => {
     try {
       const { id } = req.params;
@@ -256,9 +284,10 @@ const incidentController = {
         await fileUtils.deleteFiles(incident.photos);
       }
 
+      // Modified response to match frontend expectations
       res.json({
-        message: 'Incident report and associated files deleted successfully',
-        deletedFiles: incident.photos,
+        success: true,
+        message: 'Incident deleted successfully',
       });
     } catch (error) {
       console.error('Error deleting incident:', error);
