@@ -731,11 +731,6 @@ const UploadPage = () => {
 
   return (
     <div className="bg-gray-50 min-h-screen">
-      <Navbar
-        activePage={activePage}
-        setActivePage={setActivePage}
-        handleCleanDatabase={handleCleanDatabase}
-      />
       <div className="flex pt-16">
         <Sidebar
           activeSection={activeSection}
@@ -750,6 +745,14 @@ const UploadPage = () => {
               <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">
                 Upload Geographical Data
               </h1>
+              <div className="mb-8 flex justify-end">
+                <button
+                  onClick={handleCleanDatabase}
+                  className="py-2 px-4 bg-red-600 text-white rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50"
+                >
+                  Clean Database
+                </button>
+              </div>
 
               {dataTypes.map((type) => (
                 <div
