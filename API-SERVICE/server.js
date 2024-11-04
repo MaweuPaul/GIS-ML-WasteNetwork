@@ -15,6 +15,7 @@ const databaseRoutes = require('./Routes/databaseRoutes.js');
 const dataRoutes = require('./Routes/dataRoutes.js');
 const specialPickupRoutes = require('./Routes/specialPickupRoutes.js');
 const reportIncidence = require('./Routes/reportIssueRoute.js');
+const zones = require('./Routes/zoneRoute.js');
 
 dotenv.config();
 
@@ -78,6 +79,7 @@ app.use('/api/geology', geologyRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/specialPickup', specialPickupRoutes);
 app.use('/api/incidents', reportIncidence);
+app.use('/api/zones', zones);
 
 // Catch-all route for API
 app.use('/api/*', (req, res) => {
