@@ -400,68 +400,32 @@ const UploadPage = () => {
     const features = Array.isArray(section.geojson.features)
       ? section.geojson.features
       : [section.geojson];
-    console.log('Original features:', JSON.stringify(features[0], null, 2)); //
-    const modifiedFeatures = features.map((feature) => {
-      // Extract the geometry and properties
-      const geometry = feature.geometry;
-      const properties = feature.properties;
+    const modifiedFeatures = features.map((feature) => ({
+      type: feature.type,
+      geometry: {
+        type: feature.geometry.type,
+        coordinates: feature.geometry.coordinates,
+        bbox: feature.geometry.bbox,
+      },
+      properties: {
+        objectId: feature.properties.OBJECTID || feature.properties.objectId,
+        properties: feature.properties,
+        soilType: feature.properties.FAOSOIL || feature.properties.soilType,
+      },
+    }));
+    const payload = { features: modifiedFeatures };
 
-      // Create the payload structure similar to geology
-      return {
-        name: section.name,
-        geometry: {
-          type: geometry.type,
-          coordinates: geometry.coordinates,
-          bbox: geometry.bbox || [],
-        },
-        bbox: geometry.bbox || [],
-        properties: {
-          ...properties,
-          soilType: properties.FAOSOIL || properties.soilType,
-        },
-      };
-    });
-
-    // Upload features in chunks
-    const chunkSize = 20;
-    const totalChunks = Math.ceil(modifiedFeatures.length / chunkSize);
-
-    for (let i = 0; i < modifiedFeatures.length; i += chunkSize) {
-      const chunk = modifiedFeatures.slice(i, i + chunkSize);
-
-      setMessage(
-        `Uploading Soils data: chunk ${
-          Math.floor(i / chunkSize) + 1
-        } of ${totalChunks}...`
-      );
-
-      try {
-        const response = await axios.post(
-          'http://localhost:3000/api/soils',
-          chunk,
-          {
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-        console.log(
-          `Soils chunk ${Math.floor(i / chunkSize) + 1} upload response:`,
-          response.data
-        );
-      } catch (error) {
-        console.error(
-          `Error uploading Soils chunk ${Math.floor(i / chunkSize) + 1}:`,
-          error.response ? error.response.data : error.message
-        );
-        throw new Error(
-          `Failed to upload Soils chunk ${Math.floor(i / chunkSize) + 1}: ${
-            error.message
-          }`
-        );
+    setMessage('Uploading Soils data...');
+    const response = await axios.post(
+      'http://localhost:3000/api/soils',
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
       }
-    }
-
-    setMessage('Soils data uploaded successfully!');
+    );
+    console.log('Soils upload response:', response.data);
   };
+
   const uploadAreaOfInterest = async (section) => {
     const feature =
       section.geojson.type === 'Feature'
@@ -745,14 +709,6 @@ const UploadPage = () => {
               <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">
                 Upload Geographical Data
               </h1>
-              <div className="mb-8 flex justify-end">
-                <button
-                  onClick={handleCleanDatabase}
-                  className="py-2 px-4 bg-red-600 text-white rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50"
-                >
-                  Clean Database
-                </button>
-              </div>
 
               {dataTypes.map((type) => (
                 <div
