@@ -223,6 +223,17 @@ model SpecialPickup {
   @@index([geom], type: Gist)
 }
 
+model Zone {
+  id             Int      @id @default(autoincrement())
+  name           String   @unique
+  coordinates    Json     // Storing coordinates as GeoJSON
+  areas          String[] // Array of area names
+  collectionDays String[] // Array of collection days
+  time           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 enum WasteType {
   GENERAL
   RECYCLABLE
