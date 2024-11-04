@@ -14,6 +14,7 @@ import Reports from './PAGES/Reports';
 import Navbar from './components/navbar';
 import Results from './PAGES/resultsPage';
 import SpecialRequests from './PAGES/SpecialRequests';
+import CollectionScheduleManager from './PAGES/CollectionScheduleManager';
 
 const App = () => {
   const [activePage, setActivePage] = useState('dashboard');
@@ -32,6 +33,10 @@ const App = () => {
             <Route path="/incidents" element={<Incidents />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/special-pickup" element={<SpecialRequests />} />
+            <Route
+              path="/collection-schedule"
+              element={<CollectionScheduleManager />}
+            />
             <Route path="/" element={<Dashboard />} />
           </Routes>
         </div>
