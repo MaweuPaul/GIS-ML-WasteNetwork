@@ -36,82 +36,86 @@ const getSoil = async (req, res) => {
  * Create multiple Soils
  */
 const createSoils = async (req, res) => {
+  const { features } = req.body;
+
+  if (!Array.isArray(features)) {
+    return res
+      .status(400)
+      .json({ message: 'Invalid input: Expected an array of features' });
+  }
+
   try {
-    const { geometry, properties } = req.body;
+    const soilPromises = features.map((feature) => {
+      const { geometry, properties } = feature;
+      const { soilType } = properties;
 
-    // Ensure we're working with a MultiPolygon
-    const validGeometry = {
-      type: 'MultiPolygon',
-      coordinates: geometry.coordinates.map((polygon) => {
-        return polygon.map((ring) => {
-          // Ensure ring is closed
-          const firstPoint = ring[0];
-          const lastPoint = ring[ring.length - 1];
-          if (
-            firstPoint[0] !== lastPoint[0] ||
-            firstPoint[1] !== lastPoint[1]
-          ) {
-            return [...ring, firstPoint];
-          }
-          return ring;
-        });
-      }),
-    };
+      // Validate required fields
+      if (!soilType || !geometry || !geometry.type || !geometry.coordinates) {
+        throw new Error(
+          `Invalid feature: Missing required fields for feature ${JSON.stringify(
+            feature
+          )}`
+        );
+      }
 
-    // Insert with high precision geometry handling
-    const [soil] = await prisma.$queryRaw`
-      WITH valid_geom AS (
-        SELECT ST_Multi(
-          ST_SetSRID(
-            ST_GeomFromGeoJSON(${JSON.stringify(validGeometry)}),
-            4326
-          )
-        )::geometry(MultiPolygon, 4326) as geom
-      )
-      INSERT INTO "Soil" (
-        "soilType",
-        "geom",
-        "properties",
-        "geometryType",
-        "coordinates",
-        "bbox",
-        "createdAt",
-        "updatedAt"
-      ) 
-      SELECT
-        ${properties.FAOSOIL}::text,
-        geom,
-        ${JSON.stringify(properties)}::jsonb,
-        'MultiPolygon'::text,
-        ${JSON.stringify(geometry.coordinates)}::jsonb,
-        ${JSON.stringify(geometry.bbox)}::float[],
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-      FROM valid_geom
-      RETURNING *;
-    `;
+      // Validate geometry type
+      if (geometry.type !== 'MultiPolygon' && geometry.type !== 'Polygon') {
+        throw new Error(
+          `Invalid geometry type: Expected MultiPolygon or Polygon, got ${geometry.type}`
+        );
+      }
 
-    // Fetch the geometry with high precision
-    const [geomResult] = await prisma.$queryRaw`
-      SELECT ST_AsGeoJSON(geom, 15) as geom
-      FROM "Soil"
-      WHERE id = ${soil.id};
-    `;
+      // Convert Polygon to MultiPolygon if necessary
+      const multiPolygonGeometry =
+        geometry.type === 'Polygon'
+          ? {
+              type: 'MultiPolygon',
+              coordinates: [geometry.coordinates],
+              bbox: geometry.bbox,
+            }
+          : geometry;
 
-    const result = {
-      ...soil,
-      geom: JSON.parse(geomResult.geom),
-    };
+      // Format bbox array, defaulting to empty if not provided
+      const bboxArray = multiPolygonGeometry.bbox
+        ? `{${multiPolygonGeometry.bbox.join(',')}}`
+        : '{}';
+
+      return prisma.$executeRaw`
+        INSERT INTO "Soil" (
+          "properties",
+          "bbox",
+          "soilType",
+          "geom",
+          "createdAt",
+          "updatedAt"
+        ) 
+        VALUES (
+          ${JSON.stringify(properties)}::jsonb,
+          ${bboxArray}::float[],
+          ${soilType},
+          ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(
+            multiPolygonGeometry
+          )}), 4326),
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+        RETURNING *;
+      `;
+    });
+
+    const createdSoils = await prisma.$transaction(soilPromises);
 
     res.status(201).json({
-      message: 'Soil created successfully',
-      soil: result,
+      message: 'Soil data created successfully',
+      count: createdSoils.length,
+      soils: createdSoils,
     });
   } catch (error) {
-    console.error('Error in createSoils:', error);
+    console.error('Error creating soil data:', error);
     res.status(500).json({
-      message: 'Failed to create soil',
+      message: 'Failed to create soil data',
       error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };
