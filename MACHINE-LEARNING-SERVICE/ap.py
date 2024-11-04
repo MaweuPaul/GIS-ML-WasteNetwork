@@ -28,7 +28,7 @@ socketio = SocketIO(
 
 # Database connection setup
 connection_params = {
-    'dbname': 'GEGIS2',
+    'dbname': 'wms',
     'user': 'postgres',
     'password': 'p#maki012412',
     'host': 'localhost',
