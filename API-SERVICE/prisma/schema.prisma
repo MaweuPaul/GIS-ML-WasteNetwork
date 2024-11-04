@@ -39,17 +39,27 @@ model AreaOfInterest {
 
 model Soil {
   id           Int       @id @default(autoincrement())
+  soilType     String
+  name         String?
+  properties   Json?
+  bbox         Float[]
+  geom         Unsupported("geometry")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
-  soilType     String
-  properties   Json?
-  geometryType String    @default("MultiPolygon")
-  coordinates  Json
-  bbox         Float[]
-  geom         Unsupported("geometry(MultiPolygon,4326)")
 
   @@index([geom], type: Gist)
 }
+
+model Geology {
+  id          Int                      @id @default(autoincrement())
+  name        String?
+  bbox        Float[]
+  geom        Unsupported("geometry")?
+  properties  Json?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+}
+
 
 model DigitalElevationModel {
   id           Int                      @id @default(autoincrement())
@@ -64,16 +74,6 @@ model DigitalElevationModel {
 
 }
 
-model Geology {
-  id          Int                      @id @default(autoincrement())
-  name        String?
-  bbox        Float[]
-  geom        Unsupported("geometry")?
-  properties  Json?
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @updatedAt
-
-}
 
 model ProtectedArea {
   id          Int                      @id @default(autoincrement())
