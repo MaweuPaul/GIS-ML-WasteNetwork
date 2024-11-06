@@ -10,7 +10,8 @@ from rasterio.plot import plotting_extent
 from rasterio.mask import mask
 from matplotlib_scalebar.scalebar import ScaleBar
 import matplotlib.patheffects as pe
-from shapely.geometry import MultiPolygon, LineString, Polygon, MultiLineString
+from shapely.geometry import box, MultiPolygon, LineString, Polygon,Point, MultiLineString
+from shapely.wkt import loads
 from shapely.ops import unary_union
 from pyproj import CRS
 import warnings
@@ -32,14 +33,29 @@ import rasterio.warp
 from waste_collection_optimization import optimize_waste_collection
 from scipy.ndimage import sobel
 from matplotlib.lines import Line2D
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import r2_score
+import joblib
+from sklearn.ensemble import RandomForestRegressor
+import seaborn as sns
+from utils.predict_suitability import predict_map_suitability
 
-
+from utils.create_training_dataset import create_training_dataset
 # Method 2: Import as mlines (more common)
 import matplotlib.lines as mlines
 
 
-# Import the grid analysis functions
-from .grid_analysis import grid_based_suitability_analysis, create_analysis_report
+# # Import the grid analysis functions
+# from utils.grid_analysis import (
+#     grid_based_suitability_analysis,
+#     create_prediction_map,
+#     create_completeness_map,
+#     create_distribution_plots,
+#     perform_sensitivity_analysis,
+#     plot_sensitivity_results,
+#     create_interactive_map
+# )
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
@@ -96,8 +112,8 @@ def settlement_suitability_mapping(distance):
     elif distance > 2100:
         return 4  # Suitable
     else:
-        return 5  # Highly suitable
-
+        return 5  # Highly 
+    
 def protectedarea_suitability_mapping(distance):
     if pd.isna(distance):
         return np.nan
@@ -105,9 +121,9 @@ def protectedarea_suitability_mapping(distance):
         return 1  # Not suitable
     elif 300 < distance <= 1000:
         return 2  # Less suitable
-    elif 1500 < distance <= 2000:
+    elif 1000 < distance <= 1500:  # Fixed the gap
         return 3  # Moderately suitable
-    elif 2000 < distance <= 2500:
+    elif 1500 < distance <= 2000:
         return 4  # Suitable
     else:
         return 5  # Highly suitable
@@ -138,25 +154,46 @@ def land_use_suitability_mapping(land_use):
     else:
         return 2  # Less 
 def soil_suitability_mapping(soil_type):
-    if pd.isna(soil_type) or soil_type is None:
-        return np.nan  # No data
-    
-    soil_type = str(soil_type).lower()
-    
-    if 'sand' in soil_type:
-        return 1  # Not suitable
-    elif 'calcic cambisols' in soil_type or 'Bk' in soil_type:
-        return 2  # Less suitable
-    elif 'eutric nitosols' in soil_type or 'Ne' in soil_type:
-        return 3  # Moderately suitable
-    elif 'humic nitosols' in soil_type or 'Nh' in soil_type:
-        return 2  # Less suitable
-    elif 'silt' in soil_type:
-        return 4  # Suitable
-    elif 'clay' in soil_type:
-        return 5  # Highly suitable
-    else:
-        return 3  # Moderately suitable
+    """Map soil types to suitability scores based on the actual database values"""
+    try:
+        if pd.isna(soil_type) or soil_type is None:
+            print(f"Soil type is None or NaN")
+            return np.nan
+        
+        soil_type = str(soil_type).strip()
+        print(f"Processing soil type: {soil_type}")
+        
+        # Define exact soil type mappings based on your database values
+        soil_mappings = {
+            'Bk31-2a': 2,  # Calcic Cambisols - Less suitable
+            'Ne12-2c': 3,  # Eutric Nitosols - Moderately suitable
+            'Nh2-2c': 2    # Humic Nitosols - Less suitable
+        }
+        
+        # Check for exact matches
+        if soil_type in soil_mappings:
+            suitability = soil_mappings[soil_type]
+            print(f"Matched soil type '{soil_type}' with suitability {suitability}")
+            return suitability
+        
+        # Handle variants
+        if soil_type.startswith('Bk'):
+            print(f"Matched Calcic Cambisols variant '{soil_type}' - Less suitable")
+            return 2
+        elif soil_type.startswith('Ne'):
+            print(f"Matched Eutric Nitosols variant '{soil_type}' - Moderately suitable")
+            return 3
+        elif soil_type.startswith('Nh'):
+            print(f"Matched Humic Nitosols variant '{soil_type}' - Less suitable")
+            return 2
+        
+        # Default case
+        print(f"No match found for '{soil_type}', defaulting to moderately suitable")
+        return 3
+        
+    except Exception as e:
+        print(f"Error in soil_suitability_mapping: {str(e)}")
+        return np.nane
 
         
 # def geology_suitability_mapping(geology_type):
@@ -243,11 +280,11 @@ def create_suitability_map(data, title, output_path, transform, crs, nyeri_gdf, 
             try:
 
                 connection_params = {
-                    'dbname': 'GEGIS2',
-                    'user': '****',
-                    'password': '****',
-                    'host': 'localhost',
-                    'port': '5432'
+                 'dbname': 'wms',
+                  'user': 'postgres',
+                  'password': 'p#maki012412',
+                  'host': 'localhost',
+                  'port': '5432'
                 }
                 
                 #  connection string
@@ -386,10 +423,22 @@ def fetch_nyeri_boundary(engine, session_id, socketio):
         FROM "AreaOfInterest"
         """
         gdf = fetch_data_from_postgis(query, engine, session_id, socketio)
+        
+        # Add debug logging
+        emit_progress(session_id, f"Type of fetched data: {type(gdf)}", socketio)
+        
         if gdf is None or gdf.empty:
             raise ValueError("Nyeri boundary not found in AreaOfInterest table.")
         
         nyeri_gdf = reproject_to_nyeri(gdf, session_id, socketio)
+        
+        # Add more debug logging
+        emit_progress(session_id, f"Type after reprojection: {type(nyeri_gdf)}", socketio)
+        
+        # Verify that nyeri_gdf is a GeoDataFrame
+        if not isinstance(nyeri_gdf, gpd.GeoDataFrame):
+            raise ValueError(f"Expected GeoDataFrame, got {type(nyeri_gdf)}")
+            
         emit_progress(session_id, "Nyeri boundary fetched and reprojected.", socketio)
         return nyeri_gdf
     except Exception as e:
@@ -864,6 +913,8 @@ def calculate_weighted_suitability(layers, weights_dict, session_id, socketio):
         emit_error(session_id, f"Error in weighted suitability calculation: {str(e)}", socketio)
         return None
 
+
+
 def run_full_spatial_operations(engine, session_id, socketio):
     """
     Perform comprehensive landfill site suitability analysis.
@@ -943,62 +994,92 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 # Create buffer zones
                 buffers = create_arcgis_like_buffers(gdf_masked, distances, session_id, socketio, nyeri_gdf)
                 
-                if buffers:
-                    all_buffers.append(buffers)
-                    all_original.append(gdf_masked)
-                    
-                    # Plot buffer zones
-                    buffer_plot_path = plot_buffers(buffers, gdf_masked, nyeri_gdf, session_id, socketio, title=f'{feature_type} Buffers')
-                    if buffer_plot_path:
-                        buffer_images[feature_type] = buffer_plot_path
-                    
-                    # Rasterize buffer zones
-                    suitability_mapping = globals()[f"{feature_type.lower()}_suitability_mapping"]
-                    buffer_raster = rasterize_buffers(
-                        gdf_masked,
-                        buffers,
-                        transform,
-                        (rows, cols),
-                        suitability_mapping,
-                        distances,
-                        session_id,
-                        socketio
-                    )
-                    
-                    # Save buffer raster as TIF
-                    buffer_tif_path = os.path.join("output", f'{feature_type.lower()}_buffer.tif')
-                    save_raster_as_tif(buffer_raster, transform, NYERI_CRS, buffer_tif_path, session_id, socketio)
-                    layers[f'Buffer_{feature_type}'] = {'path': buffer_tif_path}
-                    emit_progress(session_id, f"Rasterized and saved {feature_type} buffer", socketio)
+            if buffers:
+             all_buffers.append(buffers)
+             all_original.append(gdf_masked)
+             
+             # Plot buffer zones with session ID in filename
+             buffer_plot_path = plot_buffers(
+                 buffers, 
+                 gdf_masked, 
+                 nyeri_gdf, 
+                 session_id, 
+                 socketio, 
+                 title=f'{feature_type} Buffers'
+             )
+             if buffer_plot_path:
+                 buffer_images[feature_type] = buffer_plot_path
+             
+             # Rasterize buffer zones
+             suitability_mapping = globals()[f"{feature_type.lower()}_suitability_mapping"]
+             buffer_raster = rasterize_buffers(
+                 gdf_masked,
+                 buffers,
+                 transform,
+                 (rows, cols),
+                 suitability_mapping,
+                 distances,
+                 session_id,
+                 socketio
+             )
+             
+             # Save buffer raster as TIF with session ID
+             buffer_tif_path = os.path.join("output", f'{feature_type.lower()}_buffer_session_{session_id}.tif')
+             save_raster_as_tif(
+                 buffer_raster, 
+                 transform, 
+                 NYERI_CRS, 
+                 buffer_tif_path, 
+                 session_id, 
+                 socketio
+             )
+             
+             # Create suitability map visualization with session ID
+             suitability_map_path = os.path.join(
+                 'output', 
+                 f'{feature_type.lower()}_suitability_map_session_{session_id}.png'
+             )
+             create_suitability_map(
+                 buffer_raster,
+                 f'{feature_type} Suitability Map',
+                 suitability_map_path,
+                 transform,
+                 NYERI_CRS,
+                 nyeri_gdf,
+                 plot_boundary=True
+             )
+             buffer_images[f'{feature_type}Suitability'] = suitability_map_path
+             layers[f'Buffer_{feature_type}'] = {'path': buffer_tif_path}
+             emit_progress(session_id, f"Rasterized and saved {feature_type} buffer", socketio)
         
         # Create combined buffer zones plot
         if all_buffers and all_original:
             emit_progress(session_id, "Creating combined buffer zones plot.", socketio)
             try:
                 concatenated_original = pd.concat(all_original, ignore_index=True)
-                all_buffers_combined = gpd.GeoDataFrame(pd.concat(
-                    [gdf for buffer_list in all_buffers for gdf in buffer_list], ignore_index=True
-                ))
+                # all_buffers_combined = gpd.GeoDataFrame(pd.concat(
+                #     [gdf for buffer_list in all_buffers for gdf in buffer_list], ignore_index=True
+                # ))
                 
-                # Ensure the combined buffers are a GeoDataFrame
-                if not isinstance(all_buffers_combined, gpd.GeoDataFrame):
-                    raise ValueError("Combined buffers are not a GeoDataFrame.")
+                # # Ensure the combined buffers are a GeoDataFrame
+                # if not isinstance(all_buffers_combined, gpd.GeoDataFrame):
+                #     raise ValueError("Combined buffers are not a GeoDataFrame.")
                 
-                # Ensure the concatenated original is a GeoDataFrame
-                if not isinstance(concatenated_original, gpd.GeoDataFrame):
-                    raise ValueError("Concatenated original is not a GeoDataFrame.")
+                # # Ensure the concatenated original is a GeoDataFrame
+                # if not isinstance(concatenated_original, gpd.GeoDataFrame):
+                #     raise ValueError("Concatenated original is not a GeoDataFrame.")
                 
-                combined_image_path = plot_buffers(
-                    all_buffers_combined,
-                    concatenated_original,
-                    nyeri_gdf, 
-                    session_id, 
-                    socketio, 
-                    title='Combined Buffer Zones'
-                )
-                if combined_image_path:
-                    buffer_images['Combined'] = combined_image_path
-                emit_progress(session_id, f"Combined buffer zones plot created: {combined_image_path}", socketio)
+                # combined_image_path = plot_buffers(
+                #     all_buffers_combined,
+                #     concatenated_original,
+                #     nyeri_gdf, 
+                #     session_id, 
+                #     socketio, 
+                #     title='Combined Buffer Zones'
+                # )
+                # if combined_image_path:
+                #     buffer_images['Combined'] = combined_image_pat
+                # emit_progress(session_id, f"Combined buffer zones plot created: {combined_image_path}", socketio)
             except Exception as e:
                 emit_error(session_id, f"Error creating combined buffer zones: {str(e)}", socketio)
         else:
@@ -1073,7 +1154,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
             landuse_suitability = process_landuse_suitability(landuse_raster, land_use_types, session_id, socketio)
             
             # Save land use suitability as TIF
-            landuse_tif_path = os.path.join("output", 'landuse_suitability.tif')
+            landuse_tif_path = os.path.join("output", f"landuse_suitability_session_{session_id}.tif")
             save_raster_as_tif(landuse_suitability, landuse_transform, landuse_crs, landuse_tif_path, session_id, socketio)
             layers['LandUse'] = {'path': landuse_tif_path}
             
@@ -1147,7 +1228,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         fill=np.nan,
                         dtype='float32'
                     )
-                    soil_tif_path = os.path.join("output", 'soil.tif')
+                    soil_tif_path = os.path.join("output", f"soil_suitability_session_{session_id}.tif")
                     save_raster_as_tif(soil_raster, transform, NYERI_CRS, soil_tif_path, session_id, socketio)
                     layers['Soil'] = {'path': soil_tif_path}
                     emit_progress(session_id, "Rasterized Soil layer", socketio)
@@ -1187,7 +1268,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         resampling=rasterio.warp.Resampling.bilinear
                     )
                     slope_suitability = np.vectorize(slope_suitability_mapping)(resampled_slope)
-                    slope_tif_path = os.path.join("output", 'slope_suitability.tif')
+                    slope_tif_path = os.path.join("output", f"slope_suitability_session_{session_id}.tif")
                     save_raster_as_tif(slope_suitability, transform, NYERI_CRS, slope_tif_path, session_id, socketio)
                     layers['Slope'] = {'path': slope_tif_path}
                     emit_progress(session_id, "Slope layer resampled and added to common grid", socketio)
@@ -1206,8 +1287,105 @@ def run_full_spatial_operations(engine, session_id, socketio):
             if total_suitability is not None:
                 # Reclassify suitability scores
                 reclassified_suitability = reclassify_suitability(total_suitability)
+                # After processing all layers but before grid analysis
+                emit_progress(session_id, "Creating training dataset...", socketio)
+                try:
+                    # Prepare raster criteria using the already processed paths
+                    raster_criteria = {
+                        'Slope': layers['Slope']['path'],
+                        'Land_Use': layers['LandUse']['path'],
+                        'Soil': layers['Soil']['path']
+                    }
+                    
+                    # Verify raster files exist
+                    for name, path in raster_criteria.items():
+                        if not os.path.exists(path):
+                            raise FileNotFoundError(f"Missing raster file for {name}: {path}")
+                    
+                    # Create buffer sets dictionary using the already processed buffers
+                    buffer_sets = {}
+                    for i, (feature_type, _) in enumerate(feature_types):
+                        if i < len(all_buffers):
+                            clean_name = feature_type.replace('ProtectedArea', 'Protected_Areas')
+                            buffer_sets[clean_name] = all_buffers[i]
+                    
+                            # Create training dataset
+                     # Create training dataset
+                    training_gdf, plot_path, csv_path, model_results = create_training_dataset(
+                        nyeri_gdf=nyeri_gdf,
+                        buffer_sets=buffer_sets,
+                        raster_criteria=raster_criteria,
+                        n_points=10000,
+                        session_id=session_id,
+                        socketio=socketio
+                    )
+                    
+                    if training_gdf is not None:
+                        # Store original training dataset paths
+                        buffer_images['Training_Points'] = plot_path.replace('\\', '/')
+                        buffer_images['Training_Data_CSV'] = csv_path.replace('\\', '/')
+                        
+                        # Store model-related paths and make predictions
+                        if model_results:
+                            # Store all visualization paths
+                            if 'visualizations' in model_results:
+                                for viz_name, viz_path in model_results['visualizations'].items():
+                                    buffer_images[f'Model_{viz_name}'] = viz_path.replace('\\', '/')
+                            
+                            # Add prediction for entire map
+                            output_dir = os.path.join(os.getcwd(), 'output')
+                            output_path = os.path.join(output_dir, f'suitability_prediction_{session_id}.tif')
+                            
+                            model_path = os.path.join('output', f'model_{session_id}.joblib')
+                            scaler_path = os.path.join('output', f'scaler_{session_id}.joblib')
+                            
+                            raster_criteria = {
+                            'Slope': os.path.join('output', f'slope_suitability_session_{session_id}.tif'),
+                            'Land_Use': os.path.join('output', f'landuse_suitability_session_{session_id}.tif'),
+                            'Soil': os.path.join('output', f'soil_suitability_session_{session_id}.tif')
+                             }
+
+                        # Prepare buffer sets with the correct filenames
+                            buffer_setss = {
+                            'River': os.path.join('output', f'river_buffer_session_{session_id}.tif'),
+                            'Road': os.path.join('output', f'road_buffer_session_{session_id}.tif'),
+                            'Settlement': os.path.join('output', f'settlement_buffer_session_{session_id}.tif'),
+                            'Protected_Areas': os.path.join('output', f'protectedarea_buffer_session_{session_id}.tif')
+                               }
                 
-                # Create suitability maps for each layer
+                            prediction_output = os.path.join('output', f'suitability_prediction_session_{session_id}.tif')        
+                            prediction_path, stats = predict_map_suitability(
+                                nyeri_gdf=nyeri_gdf,
+                                raster_criteria=raster_criteria,
+                                buffer_sets=buffer_setss,
+                                model_path=model_path,
+                                scaler_path=scaler_path,
+                                output_path=output_path,
+                                session_id=session_id,
+                                socketio=socketio
+                            )
+                            
+                            if prediction_path:
+                                buffer_images['Suitability_Prediction'] = prediction_path.replace('\\', '/')
+                                emit_progress(session_id, "✅ Map-wide suitability prediction completed successfully.", socketio)
+                                emit_progress(session_id, "\n📊 Prediction Statistics:", socketio)
+                                emit_progress(session_id, f"• Minimum suitability: {stats['min']:.2f}", socketio)
+                                emit_progress(session_id, f"• Maximum suitability: {stats['max']:.2f}", socketio)
+                                emit_progress(session_id, f"• Mean suitability: {stats['mean']:.2f}", socketio)
+                            else:
+                                emit_error(session_id, "❌ Failed to create map-wide suitability prediction.", socketio)
+                            
+                            emit_progress(session_id, "Training dataset and model created successfully.", socketio)
+                        else:
+                            emit_error(session_id, "Training dataset created but model training failed.", socketio)
+                    else:
+                        emit_error(session_id, "Failed to create training dataset.", socketio)
+                                    
+                except Exception as e:
+                            emit_error(session_id, f"Error creating training dataset: {str(e)}", socketio)
+                            traceback.print_exc()
+                                                    
+                                # Create suitability maps for each layer
                 for layer_name, layer_info in layers.items():
                     clean_layer_name = layer_name.replace('Buffer_', '')
                     output_path = os.path.join('output', f'{layer_name.lower()}_suitability_map_session_{session_id}.png')
@@ -1218,16 +1396,16 @@ def run_full_spatial_operations(engine, session_id, socketio):
                     buffer_images[f'{layer_name}Suitability'] = output_path
                     emit_progress(session_id, f"Created suitability map for {clean_layer_name}", socketio)
 
-                # Create total suitability map
-                output_path = os.path.join('output', f'total_suitability_map_session_{session_id}.png')
-                create_suitability_map(reclassified_suitability, 'Total Suitability Map', output_path, transform, NYERI_CRS, nyeri_gdf, plot_boundary=True)
-                buffer_images['TotalSuitability'] = output_path
-                emit_progress(session_id, "Created total suitability map", socketio)
+                # # Create total suitability map
+                # output_path = os.path.join('output', f'total_suitability_map_session_{session_id}.png')
+                # create_suitability_map(reclassified_suitability, 'Total Suitability Map', output_path, transform, NYERI_CRS, nyeri_gdf, plot_boundary=True)
+                # buffer_images['TotalSuitability'] = output_path
+                # emit_progress(session_id, "Created total suitability map", socketio)
 
-                suitability_raster_path = os.path.join("output", f'total_suitability_map_session_{session_id}.tif')
-                save_raster_as_tif(total_suitability, transform, NYERI_CRS, suitability_raster_path, session_id, socketio)
-                layers['TotalSuitability'] = {'path': suitability_raster_path}
-                emit_progress(session_id, f"Total suitability raster saved as {suitability_raster_path}", socketio)
+                # suitability_raster_path = os.path.join("output", f'total_suitability_map_session_{session_id}.tif')
+                # save_raster_as_tif(total_suitability, transform, NYERI_CRS, suitability_raster_path, session_id, socketio)
+                # layers['TotalSuitability'] = {'path': suitability_raster_path}
+                # emit_progress(session_id, f"Total suitability raster saved as {suitability_raster_path}", socketio)
                 
                 
                 # emit_progress(session_id, "Starting waste collection optimization", socketio)
@@ -1249,46 +1427,43 @@ def run_full_spatial_operations(engine, session_id, socketio):
                 #     buffer_images['WasteCollectionCombinedSuitability'] = plot_paths.get('combined_suitability')
                 # else:
                 #     emit_progress(session_id, "Waste collection optimization completed but found no optimal locations.", socketio)
+                  
+  
 
-                # Perform grid-based suitability analysis
-                analysis_results = grid_based_suitability_analysis(
-                nyeri_gdf=nyeri_gdf,
-                layers=layers,
-                weights=weights_dict,
-                session_id=session_id,
-                socketio=socketio,
-                cell_size=100,
-                num_points=1000
-                         )
-                if analysis_results is not None:
-                    (sampled_points, model, report, plot_paths, excel_path, grid_gdf_processed, 
-                        prediction_map, completeness_map, dist_plots, sensitivity_results, 
-                        sensitivity_plot, interactive_prediction_map) = analysis_results
+                # # Perform grid-based suitability analysis
+                # # Perform grid-based suitability analysis
+                # analysis_results = grid_based_suitability_analysis(
+                #     nyeri_gdf=nyeri_gdf,
+                #     layers=layers,
+                #     weights=weights_dict,
+                #     session_id=session_id,
+                #     socketio=socketio,
+                #     cell_size=100,
+                #     num_points=1000
+                # )
                 
-                # Add grid analysis results to buffer_images
-                    for plot_name, plot_path in plot_paths.items():
-                        buffer_images[f'GridAnalysis_{plot_name}'] = plot_path
-                    buffer_images['GridAnalysisReport'] = report
-                    buffer_images['GridAnalysisExcel'] = excel_path
-                    buffer_images['PredictionMap'] = prediction_map
-                    buffer_images['CompletenessMap'] = completeness_map
-                    buffer_images['DistributionPlots'] = dist_plots
-                    buffer_images['sensitivityResults'] = sensitivity_results
-                    buffer_images['SensitivityAnalysisPlot'] = sensitivity_plot
-                    buffer_images['InteractivePredictionMap'] = interactive_prediction_map
-                    # Visualize random points
-                    if isinstance(sensitivity_results, tuple):
-                      sensitivity_data, sensitivity_plot = sensitivity_results
-                      buffer_images['SensitivityAnalysisPlot'] = sensitivity_plot
-                    else:
-                           buffer_images['SensitivityAnalysisResults'] = sensitivity_results
+                # if analysis_results is not None:
+                #     (sampled_points, model, report, plot_paths, excel_path, 
+                #      grid_gdf_processed, prediction_map, completeness_map, 
+                #      dist_plots, sensitivity_results, sensitivity_plot, 
+                #      interactive_map) = analysis_results
                     
+                #     # Add results to buffer_images dictionary
+                #     buffer_images.update({
+                #         'GridAnalysis_Plots': plot_paths,
+                #         'PredictionMap': prediction_map,
+                #         'CompletenessMap': completeness_map,
+                #         'DistributionPlots': dist_plots,
+                #         'SensitivityPlot': sensitivity_plot,
+                #         'InteractiveMap': interactive_map,
+                #         'AnalysisReport': report,
+                #         'ExcelResults': excel_path
+                #     })
                     
-                    emit_progress(session_id, "Grid-based suitability analysis completed", socketio)
-   
-                else:
-                    emit_error(session_id, "Grid-based suitability analysis failed to produce results.", socketio)
-                    
+                #     emit_progress(session_id, "Grid analysis completed successfully", socketio)
+                # else:
+                #     emit_error(session_id, "Grid analysis failed", socketio)
+
                 # Normalize file paths
                 for key, path in buffer_images.items():
                     if isinstance(path, str):
