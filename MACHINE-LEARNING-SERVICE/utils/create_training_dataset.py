@@ -44,11 +44,10 @@ def emit_error(session_id, message, socketio):
 
 def calculate_total_suitability(row, weights=None):
     """Calculate weighted suitability score for a row"""
-    if weights is None:
-        # Adjusted weights to balance criteria
+    if weights is None:        # Adjusted weights to balance criteria
         weights = {
-            'River_b': 20.0,  # Reduced weight
-            'Road_b': 30.0,   # Increased weight
+            'River_b': 25.0,  # Reduced weight
+            'Road_b': 25.0,   # Increased weight
             'Settlem': 20.0,  # Increased weight
             'Soil': 10.0,
             'Protect': 10.0,
