@@ -45,15 +45,15 @@ def emit_error(session_id, message, socketio):
 def calculate_total_suitability(row, weights=None):
     """Calculate weighted suitability score for a row"""
     if weights is None:
-        # Your specific weights from AHP analysis
+        # Adjusted weights to balance criteria
         weights = {
-            'River_b': 36.54,
-            'Road_b': 25.86,
-            'Settlem': 17.97,
-            'Soil': 9.24,
-            'Protect': 4.75,
-            'Land_U': 3.30,
-            'Slope': 2.34
+            'River_b': 20.0,  # Reduced weight
+            'Road_b': 30.0,   # Increased weight
+            'Settlem': 20.0,  # Increased weight
+            'Soil': 10.0,
+            'Protect': 10.0,
+            'Land_U': 5.0,
+            'Slope': 5.0
         }
     
     # Convert weights to decimals (divide by 100)
@@ -104,26 +104,26 @@ def clean_and_process_training_data(training_gdf, session_id, socketio):
         
         # Fill NaN values with appropriate defaults
         default_values = {
-            'River_b': 5,    # Highly suitable for areas far from rivers (36.54%)
-            'Road_b': 1,     # Not suitable for areas far from roads (25.86%)
-            'Settlem': 4,    # Suitable for areas far from settlements (17.97%)
-            'Soil': 3,       # Moderate for unknown soil type (9.24%)
-            'Protect': 5,    # Highly suitable for areas far from protected areas (4.75%)
-            'Land_U': 3,     # Moderate for unknown land use (3.30%)
-            'Slope': 3       # Moderate for unknown slope (2.34%)
+            'River_b': 5,    # Highly suitable for areas far from rivers
+            'Road_b': 1,     # Not suitable for areas far from roads
+            'Settlem': 4,    # Suitable for areas far from settlements
+            'Soil': 3,       # Moderate for unknown soil type
+            'Protect': 5,    # Highly suitable for areas far from protected areas
+            'Land_U': 3,     # Moderate for unknown land use
+            'Slope': 3       # Moderate for unknown slope
         }
         
         cleaned_gdf = cleaned_gdf.fillna(default_values)
         
         # Calculate total suitability score with specific weights
         weights = {
-            'River_b': 36.54,
-            'Road_b': 25.86,
-            'Settlem': 17.97,
-            'Soil': 9.24,
-            'Protect': 4.75,
-            'Land_U': 3.30,
-            'Slope': 2.34
+            'River_b': 25.0,
+            'Road_b': 25.0,
+            'Settlem': 20.0,
+            'Soil': 10.0,
+            'Protect': 10.0,
+            'Land_U': 5.0,
+            'Slope': 5.0
         }
         cleaned_gdf['Total_Suit'] = cleaned_gdf.apply(lambda row: calculate_total_suitability(row, weights), axis=1)
         
@@ -166,7 +166,6 @@ def clean_and_process_training_data(training_gdf, session_id, socketio):
     except Exception as e:
         emit_error(session_id, f"Error in cleaning training data: {str(e)}", socketio)
         return None
-
 def emit_progress(session_id, message, socketio):
     try:
         if socketio:
