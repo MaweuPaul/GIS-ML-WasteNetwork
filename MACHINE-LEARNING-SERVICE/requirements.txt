@@ -1,18 +1,37 @@
-geopandas
-pandas
-matplotlib
+# Core data handling and analysis
 numpy
+pandas
+scipy
+scikit-learn
+
+# Geospatial packages
+geopandas
 rasterio
 shapely
 pyproj
-eventlet
-scipy
-joblib
-scikit-learn
+rtree
+descartes
+
+# Visualization
+matplotlib
+seaborn
+folium
+plotly
+ipywidgets
+IPython
+
+# Web framework and communication
 flask
 flask-socketio
 flask-cors
+
+# Database
 sqlalchemy
 psycopg2-binary
+
+# Utilities
+tqdm
+eventlet
+joblib
 tabulate
 python-dotenv
