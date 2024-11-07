@@ -1308,6 +1308,17 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         if i < len(all_buffers):
                             clean_name = feature_type.replace('ProtectedArea', 'Protected_Areas')
                             buffer_sets[clean_name] = all_buffers[i]
+                            
+                               # Create suitability maps for each layer
+                    for layer_name, layer_info in layers.items():
+                      clean_layer_name = layer_name.replace('Buffer_', '')
+                      output_path = os.path.join('output', f'{layer_name.lower()}_suitability_map_session_{session_id}.png')
+                    with rasterio.open(layer_info['path']) as src:
+                        layer_data = src.read(1)
+                        plot_boundary = layer_name.lower() not in ['soil', 'landuse', 'slope', 'geology']
+                        create_suitability_map(layer_data, f'{clean_layer_name} Suitability Map', output_path, transform, NYERI_CRS, nyeri_gdf, plot_boundary=plot_boundary)
+                    buffer_images[f'{layer_name}Suitability'] = output_path
+                    emit_progress(session_id, f"Created suitability map for {clean_layer_name}", socketio)
                     
                             # Create training dataset
                      # Create training dataset
@@ -1339,28 +1350,29 @@ def run_full_spatial_operations(engine, session_id, socketio):
                             model_path = os.path.join('output', f'model_{session_id}.joblib')
                             scaler_path = os.path.join('output', f'scaler_{session_id}.joblib')
                             
-                            raster_criteria = {
-                            'Slope': os.path.join('output', f'slope_suitability_session_{session_id}.tif'),
-                            'Land_Use': os.path.join('output', f'landuse_suitability_session_{session_id}.tif'),
-                            'Soil': os.path.join('output', f'soil_suitability_session_{session_id}.tif')
-                             }
+                        #     raster_criteria = {
+                        #     'Slope': os.path.join('output', f'slope_suitability_session_{session_id}.tif'),
+                        #     'Land_Use': os.path.join('output', f'landuse_suitability_session_{session_id}.tif'),
+                        #     'Soil': os.path.join('output', f'soil_suitability_session_{session_id}.tif')
+                        #      }
 
-                        # Prepare buffer sets with the correct filenames
-                            buffer_setss = {
-                            'River': os.path.join('output', f'river_buffer_session_{session_id}.tif'),
-                            'Road': os.path.join('output', f'road_buffer_session_{session_id}.tif'),
-                            'Settlement': os.path.join('output', f'settlement_buffer_session_{session_id}.tif'),
-                            'Protected_Areas': os.path.join('output', f'protectedarea_buffer_session_{session_id}.tif')
-                               }
+                        # # Prepare buffer sets with the correct filenames
+                        #     buffer_setss = {
+                        #     'River': os.path.join('output', f'river_buffer_session_{session_id}.tif'),
+                        #     'Road': os.path.join('output', f'road_buffer_session_{session_id}.tif'),
+                        #     'Settlement': os.path.join('output', f'settlement_buffer_session_{session_id}.tif'),
+                        #     'Protected_Areas': os.path.join('output', f'protectedarea_buffer_session_{session_id}.tif')
+                        #        }
                 
-                            prediction_output = os.path.join('output', f'suitability_prediction_session_{session_id}.tif')        
+                            prediction_output = os.path.join('output', f'suitability_prediction_session_{session_id}.tif')
                             prediction_path, stats = predict_map_suitability(
                                 nyeri_gdf=nyeri_gdf,
                                 raster_criteria=raster_criteria,
-                                buffer_sets=buffer_setss,
+                                buffer_sets=buffer_sets,
                                 model_path=model_path,
                                 scaler_path=scaler_path,
-                                output_path=output_path,
+                                interval =10,
+                                # output_path=prediction_output,
                                 session_id=session_id,
                                 socketio=socketio
                             )
@@ -1372,9 +1384,16 @@ def run_full_spatial_operations(engine, session_id, socketio):
                                 emit_progress(session_id, f"• Minimum suitability: {stats['min']:.2f}", socketio)
                                 emit_progress(session_id, f"• Maximum suitability: {stats['max']:.2f}", socketio)
                                 emit_progress(session_id, f"• Mean suitability: {stats['mean']:.2f}", socketio)
+                                emit_progress(session_id, f"• Standard deviation: {stats['std']:.2f}", socketio)
+                                
+                                emit_progress(session_id, "\n📊 Area Distribution:", socketio)
+                                for class_name, data in stats['area_distribution'].items():
+                                    emit_progress(session_id, 
+                                                 f"• {class_name}: {data['area_ha']:.2f} ha ({data['percentage']:.1f}%)", 
+                                                 socketio)
                             else:
                                 emit_error(session_id, "❌ Failed to create map-wide suitability prediction.", socketio)
-                            
+                                                        
                             emit_progress(session_id, "Training dataset and model created successfully.", socketio)
                         else:
                             emit_error(session_id, "Training dataset created but model training failed.", socketio)
@@ -1385,16 +1404,7 @@ def run_full_spatial_operations(engine, session_id, socketio):
                             emit_error(session_id, f"Error creating training dataset: {str(e)}", socketio)
                             traceback.print_exc()
                                                     
-                                # Create suitability maps for each layer
-                for layer_name, layer_info in layers.items():
-                    clean_layer_name = layer_name.replace('Buffer_', '')
-                    output_path = os.path.join('output', f'{layer_name.lower()}_suitability_map_session_{session_id}.png')
-                    with rasterio.open(layer_info['path']) as src:
-                        layer_data = src.read(1)
-                        plot_boundary = layer_name.lower() not in ['soil', 'landuse', 'slope', 'geology']
-                        create_suitability_map(layer_data, f'{clean_layer_name} Suitability Map', output_path, transform, NYERI_CRS, nyeri_gdf, plot_boundary=plot_boundary)
-                    buffer_images[f'{layer_name}Suitability'] = output_path
-                    emit_progress(session_id, f"Created suitability map for {clean_layer_name}", socketio)
+ 
 
                 # # Create total suitability map
                 # output_path = os.path.join('output', f'total_suitability_map_session_{session_id}.png')
