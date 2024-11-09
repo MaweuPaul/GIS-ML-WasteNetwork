@@ -31,7 +31,9 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 import warnings
 import datetime
+from sqlalchemy import text
 # Import contextily for basemap
+
 import contextily as ctx
         
 
@@ -231,6 +233,80 @@ def calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, aoi_gdf, socketio=
         traceback.print_exc()
         return grid_gdf
 
+#SAVE COLLECTION POINTS TO DB 
+def save_collection_points_to_db(markers_data, engine, socketio=None, session_id=None):
+    """
+    Save or update collection points in the database
+    """
+    try:
+        # Create points from coordinates
+        collection_points = []
+        for marker in markers_data:
+            point_geom = f"SRID=21037;POINT({marker['x_coord']} {marker['y_coord']})"
+            collection_points.append({
+                'point_id': marker['site_id'],
+                'description': f'Collection Point {marker["site_id"]}',
+                'geom': point_geom,
+                'updated_at': datetime.datetime.now()
+            })
+
+        # Create a temporary table for the new points
+        temp_table_query = text("""
+        CREATE TEMP TABLE temp_collection_points (
+            point_id INT,
+            description TEXT,
+            geom geometry(Point, 21037),
+            updated_at TIMESTAMP
+        ) ON COMMIT DROP;
+        """)
+        
+        # Insert new points into temp table
+        insert_temp_query = text("""
+        INSERT INTO temp_collection_points (point_id, description, geom, updated_at)
+        VALUES (:point_id, :description, :geom::geometry, :updated_at);
+        """)
+        
+        # Upsert query using the temp table
+        upsert_query = text("""
+        INSERT INTO collection_points (point_id, description, geom, created_at, updated_at)
+        SELECT 
+            t.point_id,
+            t.description,
+            t.geom,
+            COALESCE(cp.created_at, CURRENT_TIMESTAMP),
+            t.updated_at
+        FROM temp_collection_points t
+        LEFT JOIN collection_points cp ON t.point_id = cp.point_id
+        ON CONFLICT (point_id) 
+        DO UPDATE SET
+            description = EXCLUDED.description,
+            geom = EXCLUDED.geom,
+            updated_at = EXCLUDED.updated_at
+        RETURNING id, point_id;
+        """)
+
+        with engine.begin() as connection:
+            # Create temporary table
+            connection.execute(temp_table_query)
+            
+            # Insert into temp table
+            for point in collection_points:
+                connection.execute(insert_temp_query, point)
+            
+            # Perform upsert and get results
+            result = connection.execute(upsert_query)
+            affected_rows = result.rowcount
+
+        emit_progress(f"Successfully saved/updated {affected_rows} collection points to database", 
+                     socketio, session_id)
+        return True
+
+    except Exception as e:
+        emit_progress(f"Error saving collection points to database: {str(e)}", 
+                     socketio, session_id)
+        logger.error(f"Database error: {str(e)}")
+        return False
+
 def perform_clustering(grid_gdf, n_clusters=5, socketio=None, session_id=None):
     emit_progress(f"Performing clustering with {n_clusters} clusters", socketio, session_id)
     try:
@@ -286,7 +362,7 @@ def create_scale_bar(ax, length=10, units='km', subdivisions=5):
     ax.set_ylim(-0.5, 1)
     ax.axis('off')
     
-def create_markers_map(grid_gdf, aoi_gdf, socketio=None, session_id=None):
+def create_markers_map(grid_gdf, aoi_gdf,  engine=None,socketio=None, session_id=None):
     """
     Create a simple map showing only collection points without basemap
     """
@@ -384,19 +460,22 @@ def create_markers_map(grid_gdf, aoi_gdf, socketio=None, session_id=None):
         
         # Create and save markers data to CSV and Excel
         markers_df = pd.DataFrame(markers_data)
-        csv_path = os.path.join('output', f'collection_points_{timestamp}.csv')
-        excel_path = os.path.join('output', f'collection_points_{timestamp}.xlsx')
         
-        markers_df.to_csv(csv_path, index=False)
-        markers_df.to_excel(excel_path, index=False)
+
+        success = save_collection_points_to_db(markers_data, engine, socketio, session_id)
         
-        return map_path, csv_path, excel_path, markers_df
+        if not success:
+            emit_progress("Failed to save collection points to database", 
+                         socketio, session_id)
+            return None, None
+        
+        return map_path, pd.DataFrame(markers_data)
         
     except Exception as e:
-        emit_progress(f"Error creating simple collection points map: {str(e)}", 
+        emit_progress(f"Error in create_markers_map: {str(e)}", 
                      socketio, session_id)
-        logger.error(f"Error creating simple collection points map: {str(e)}")
-        return None, None, None, None
+        logger.error(f"Error in create_markers_map: {str(e)}")
+        return None, None
     
 def create_suitability_map(grid_gdf, score_column, title, output_path, aoi_gdf, socketio=None, session_id=None):
     emit_progress(f"Creating suitability map: {title}", socketio, session_id)
@@ -549,9 +628,9 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
         labels=['Not Suitable', 'Less Suitable', 'Moderately Suitable', 'Suitable', 'Highly Suitable']
     )
     
-   
-    markers_map_path, markers_csv_path, markers_excel_path, markers_df = create_markers_map(
-    grid_gdf, aoi_boundary, socketio, session_id
+       
+    markers_map_path, markers_df = create_markers_map(
+        grid_gdf, aoi_boundary, engine, socketio, session_id
     )
     if markers_df is not None and not markers_df.empty:
        emit_progress(f"Created markers map with {len(markers_df)} collection points", socketio, session_id)
@@ -645,8 +724,6 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
     'combined_suitability': 'output/combined_suitability.png',
     'optimal_locations': 'output/optimal_locations_detailed.png',
     'markers_map': markers_map_path,
-    'markers_coordinates_csv': markers_csv_path,
-    'markers_coordinates_excel': markers_excel_path
     }
 
 @socketio.on('start_optimization')
