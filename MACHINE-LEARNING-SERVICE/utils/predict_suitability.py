@@ -46,6 +46,58 @@ def classify_suitability(score):
         return 'Suitable'
     else:
         return 'Highly Suitable'
+    
+    
+def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None):
+    """
+    Save identified landfill locations in formats suitable for network analysis
+    """
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create a new GeoDataFrame with only the necessary information
+        landfill_locations = gpd.GeoDataFrame({
+            'landfill_id': range(1, len(candidate_gdf) + 1),
+            'suitability_score': candidate_gdf['Total_Suit'],
+            'suitability_class': candidate_gdf['Suitability_Class'],
+            'geometry': candidate_gdf.geometry
+        }, crs=candidate_gdf.crs)
+        
+        # Add coordinates as separate columns
+        landfill_locations['longitude'] = landfill_locations.geometry.x
+        landfill_locations['latitude'] = landfill_locations.geometry.y
+        
+        # Save in different formats
+        # 1. GeoJSON for GIS applications
+        geojson_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.geojson')
+        landfill_locations.to_file(geojson_path, driver='GeoJSON')
+        
+        # 2. Shapefile for desktop GIS
+        shp_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.shp')
+        landfill_locations.to_file(shp_path)
+        
+        # 3. CSV for simple table format
+        csv_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.csv')
+        landfill_locations.to_csv(csv_path, index=False)
+        
+        emit_progress(session_id, "\n💾 Saving landfill locations...", socketio)
+        emit_progress(session_id, f"Saved {len(landfill_locations)} landfill locations:", socketio)
+        emit_progress(session_id, f"  • GeoJSON: {geojson_path}", socketio)
+        emit_progress(session_id, f"  • Shapefile: {shp_path}", socketio)
+        emit_progress(session_id, f"  • CSV: {csv_path}", socketio)
+        
+        return {
+            'geojson_path': geojson_path,
+            'shapefile_path': shp_path,
+            'csv_path': csv_path,
+            'landfill_count': len(landfill_locations)
+        }
+        
+    except Exception as e:
+        emit_error(session_id, f"Error saving landfill locations: {str(e)}", socketio)
+        return None    
+
+
 
 def clean_data(points_gdf):
     """Clean the input data with appropriate interpolation and handling of no-data values"""
@@ -216,7 +268,120 @@ def create_candidate_map(gdf, nyeri_gdf, title, output_path):
     
     return output_path
 
-def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=10, session_id=None, socketio=None):
+def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_area=10000, socketio=None, session_id=None):
+    """
+    Create continuous areas from candidate sites by buffering and dissolving
+    """
+    try:
+        emit_progress(session_id, "Creating continuous candidate areas...", socketio)
+        
+        # Create buffer around points
+        buffered = candidate_gdf.copy()
+        buffered.geometry = buffered.geometry.buffer(buffer_distance)
+        
+        # Create a unique identifier for dissolving
+        buffered['dissolve_id'] = 1
+        
+        # Specify numeric columns to aggregate
+        numeric_columns = ['Total_Suit']
+        agg_dict = {col: 'mean' for col in numeric_columns if col in buffered.columns}
+        
+        # Dissolve overlapping buffers
+        dissolved = buffered.dissolve(
+            by='dissolve_id',
+            aggfunc=agg_dict,
+            as_index=False
+        )
+        
+        # Explode multi-polygons into single polygons
+        continuous_sites = dissolved.explode(index_parts=True)
+        continuous_sites = continuous_sites.reset_index(drop=True)
+        
+        # Calculate area and filter by minimum size
+        continuous_sites['area_m2'] = continuous_sites.geometry.area
+        continuous_sites = continuous_sites[continuous_sites['area_m2'] >= min_area]
+        
+        # Smooth the polygons slightly
+        continuous_sites.geometry = continuous_sites.geometry.buffer(0)
+        
+        # Add site IDs and calculate centroids
+        continuous_sites = continuous_sites.reset_index(drop=True)
+        continuous_sites['site_id'] = range(1, len(continuous_sites) + 1)
+        continuous_sites['centroid_x'] = continuous_sites.geometry.centroid.x
+        continuous_sites['centroid_y'] = continuous_sites.geometry.centroid.y
+        
+        # Add suitability class based on mean Total_Suit
+        if 'Total_Suit' in continuous_sites.columns:
+            continuous_sites['Suitability_Class'] = continuous_sites['Total_Suit'].apply(classify_suitability)
+        
+        emit_progress(session_id, f"Created {len(continuous_sites)} continuous sites", socketio)
+        return continuous_sites
+        
+    except Exception as e:
+        emit_error(session_id, f"Error creating continuous sites: {str(e)}", socketio)
+        traceback.print_exc()
+        return None
+
+def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, output_path):
+    """Create and save a map of continuous candidate sites"""
+    fig, ax = plt.subplots(figsize=(15, 10))
+    
+    # Plot base map
+    nyeri_gdf.plot(ax=ax, alpha=0.3, color='lightgray')
+    
+    # Plot continuous suitable areas
+    continuous_sites_gdf.plot(
+        ax=ax,
+        color='#90EE90',  # Light green
+        alpha=0.7,
+        label='Suitable Areas'
+    )
+    
+    # Add site labels
+    for idx, row in continuous_sites_gdf.iterrows():
+        centroid = row.geometry.centroid
+        ax.annotate(f'Site {row["site_id"]}\n{row["area_m2"]/10000:.1f} ha',
+                   (centroid.x, centroid.y),
+                   xytext=(3, 3),
+                   textcoords="offset points",
+                   fontsize=8,
+                   bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
+    
+    # Customize the legend
+    ax.legend(
+        title='Candidate Sites',
+        title_fontsize=12,
+        fontsize=10,
+        loc='upper right',
+        frameon=True,
+        facecolor='white',
+        edgecolor='black'
+    )
+    
+    ax.set_title(title, fontsize=16, pad=20)
+    
+    # Add north arrow
+    ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction',
+               horizontalalignment='center', verticalalignment='center',
+               fontsize=18, fontweight='bold',
+               path_effects=[pe.withStroke(linewidth=3, foreground="w")])
+    
+    # Add scale bar
+    scalebar = ScaleBar(1, 'km', dimension='si-length', location='lower right')
+    ax.add_artist(scalebar)
+    
+    # Remove axes
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Adjust layout and save
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return output_path
+
+def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=50, session_id=None, socketio=None):
     try:
         emit_progress(session_id, "🚀 Starting suitability prediction...", socketio)
         
@@ -336,6 +501,44 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             candidate_map_path
         )
         
+        # Create continuous candidate sites
+        emit_progress(session_id, "\n🔄 Creating continuous candidate areas...", socketio)
+        continuous_sites = create_continuous_candidate_sites(
+            candidate_gdf,
+            buffer_distance=50,  # 50m buffer
+            min_area=10000,     # 1 hectare minimum
+            socketio=socketio,
+            session_id=session_id
+        )
+        
+        continuous_map_path = None
+        continuous_geojson = None
+        
+        if continuous_sites is not None and not continuous_sites.empty:
+            # Create continuous candidate sites map
+            continuous_map_path = os.path.join(output_dir, f"continuous_candidate_sites_{session_id}_{timestamp}.png")
+            create_continuous_candidate_map(
+                continuous_sites,
+                nyeri_gdf,
+                'Continuous Candidate Landfill Sites',
+                continuous_map_path
+            )
+            
+            # Save continuous sites to files
+            continuous_geojson = os.path.join(output_dir, f"continuous_sites_{session_id}_{timestamp}.geojson")
+            continuous_sites.to_file(continuous_geojson, driver='GeoJSON')
+            
+            # Add continuous sites statistics
+            stats['continuous_sites'] = {
+                'total_sites': len(continuous_sites),
+                'total_area_ha': continuous_sites['area_m2'].sum() / 10000,
+                'min_area_ha': continuous_sites['area_m2'].min() / 10000,
+                'max_area_ha': continuous_sites['area_m2'].max() / 10000,
+                'mean_area_ha': continuous_sites['area_m2'].mean() / 10000
+            }
+        else:
+            emit_progress(session_id, "⚠️ Could not create continuous sites", socketio)
+        
         # Save to CSV
         full_csv_path = os.path.join(output_dir, f"full_suitability_{session_id}_{timestamp}.csv")
         candidate_csv_path = os.path.join(output_dir, f"candidate_sites_{session_id}_{timestamp}.csv")
@@ -376,9 +579,13 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         emit_progress(session_id, f"Full suitability map saved to: {full_map_path}", socketio)
         emit_progress(session_id, f"Candidate sites map saved to: {candidate_map_path}", socketio)
         
+        landfill_paths = save_landfill_locations(candidate_gdf, output_dir, session_id, socketio)
+        
         return {
             'full_map_path': full_map_path,
             'candidate_map_path': candidate_map_path,
+            'continuous_map_path': continuous_map_path,
+            'continuous_geojson': continuous_geojson,
             'full_csv_path': full_csv_path,
             'candidate_csv_path': candidate_csv_path,
             'stats': stats
