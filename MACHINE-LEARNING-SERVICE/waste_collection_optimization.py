@@ -1,28 +1,39 @@
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from shapely.geometry import Point, box
+import rasterio
 import os
 import sys
-import geopandas as gpd
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
-import matplotlib.patches as mpatches
+import traceback
 from matplotlib_scalebar.scalebar import ScaleBar
 import matplotlib.patheffects as pe
+import matplotlib.colors as colors
+import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from shapely.geometry import box, Point
-from sklearn.cluster import KMeans
+import datetime
+import eventlet
+import joblib
+from scipy.ndimage import gaussian_filter, zoom
+from sklearn.cluster import KMeans, DBSCAN
 from rasterio.plot import plotting_extent
 from rasterio.mask import mask
-import rasterio
 import rasterio.transform
 from flask import Flask
 from flask_socketio import SocketIO
 from sqlalchemy import create_engine
 import logging
 from pyproj import CRS
-from scipy.ndimage import gaussian_filter, zoom
-from matplotlib.lines import Line2D
-
+import xlsxwriter
+from shapely.ops import unary_union
+from shapely.validation import make_valid
+import warnings
+import datetime
+# Import contextily for basemap
+import contextily as ctx
+        
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -90,7 +101,7 @@ def create_grid(aoi_gdf, cell_size=50, socketio=None, session_id=None):
     
     grid_gdf = gpd.GeoDataFrame({'geometry': grid_polygons}, crs=aoi_gdf.crs)
     
-    grid_gdf = validate_geometries(grid_gdf, socketio, session_id)
+    # grid_gdf = validate_geometries(grid_gdf, socketio, session_id)
     
     grid_gdf['is_within_aoi'] = grid_gdf.within(aoi_gdf.unary_union)
     
@@ -101,63 +112,124 @@ def create_grid(aoi_gdf, cell_size=50, socketio=None, session_id=None):
     emit_progress(f"Grid cells within AOI: {grid_gdf['is_within_aoi'].sum()}", socketio, session_id)
     
     return grid_gdf, x_coords, y_coords
-
 def calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, aoi_gdf, socketio=None, session_id=None):
     emit_progress("Calculating proximity to roads and settlements", socketio, session_id)
     
-    emit_progress("Clipping grid to AOI", socketio, session_id)
-    grid_gdf = gpd.clip(grid_gdf, aoi_gdf)
-    
-    emit_progress("Validating geometries of roads and settlements.", socketio, session_id)
-    roads_gdf = validate_geometries(roads_gdf, socketio, session_id)
-    settlements_gdf = validate_geometries(settlements_gdf, socketio, session_id)
-    
-    emit_progress("Creating road suitability buffers", socketio, session_id)
-    road_buffers = [
-        roads_gdf.buffer(50).unary_union.difference(roads_gdf.buffer(0).unary_union),
-        roads_gdf.buffer(200).unary_union.difference(roads_gdf.buffer(50).unary_union),
-        roads_gdf.buffer(500).unary_union.difference(roads_gdf.buffer(200).unary_union),
-        roads_gdf.buffer(1000).unary_union.difference(roads_gdf.buffer(500).unary_union),
-        aoi_gdf.geometry.unary_union.difference(roads_gdf.buffer(1000).unary_union)
-    ]
-    
-    road_suitability = gpd.GeoDataFrame(geometry=[geom for geom in road_buffers if not geom.is_empty], crs=aoi_gdf.crs)
-    road_suitability['road_score'] = [5, 4, 3, 2, 1][:len(road_suitability)]
-    
-    emit_progress("Joining road suitability to grid", socketio, session_id)
-    grid_gdf = gpd.sjoin(grid_gdf, road_suitability, how="left", predicate="intersects")
-    grid_gdf['road_score'] = grid_gdf['road_score'].fillna(1)
-    
-    emit_progress("Finding nearest settlements for each grid cell", socketio, session_id)
-    grid_with_settlements = gpd.sjoin_nearest(
-        grid_gdf, settlements_gdf,
-        how="left", distance_col="settlement_distance",
-        lsuffix='grid', rsuffix='settlement'
-    )
-    
-    grid_with_settlements['settlement_distance'] = grid_with_settlements['settlement_distance'].fillna(np.inf)
-    
-    emit_progress("Calculating settlement suitability scores", socketio, session_id)
-    
-    # Settlement score (weight: 0.6)
-    grid_with_settlements['settlement_score'] = grid_with_settlements['settlement_distance'].apply(
-        lambda x: 5 if x < 100 else (4 if x < 300 else (3 if x < 600 else (2 if x < 1000 else 1)))
-    )
-    
-    # Combined weighted score
-    grid_with_settlements['combined_score'] = (
-        0.4 * grid_with_settlements['road_score'] + 
-        0.6 * grid_with_settlements['settlement_score']
-    )
-    
-    # Normalize combined score to 1-5 range
-    min_score = grid_with_settlements['combined_score'].min()
-    max_score = grid_with_settlements['combined_score'].max()
-    grid_with_settlements['combined_score'] = (
-        (grid_with_settlements['combined_score'] - min_score) / (max_score - min_score) * 4 + 1
-    )
-    
-    return grid_with_settlements
+    try:
+        emit_progress("Clipping grid to AOI", socketio, session_id)
+        grid_gdf = gpd.clip(grid_gdf, aoi_gdf)
+        
+        emit_progress("Validating geometries of roads and settlements.", socketio, session_id)
+        roads_gdf = validate_geometries(roads_gdf, socketio, session_id)
+        settlements_gdf = validate_geometries(settlements_gdf, socketio, session_id)
+        
+        emit_progress("Creating road suitability buffers", socketio, session_id)
+        
+        # Create a unified road geometry
+        road_union = roads_gdf.geometry.unary_union
+        if road_union is None or road_union.is_empty:
+            emit_progress("Warning: No valid road geometries found", socketio, session_id)
+            return grid_gdf
+            
+        # Create buffers with error handling
+        try:
+            buffer_0 = road_union.buffer(0)
+            buffer_50 = road_union.buffer(50)
+            buffer_200 = road_union.buffer(200)
+            buffer_500 = road_union.buffer(500)
+            buffer_1000 = road_union.buffer(1000)
+            
+            road_buffers = []
+            
+            # Zone 1: 0-50m
+            if not buffer_50.is_empty:
+                zone1 = buffer_50.difference(buffer_0)
+                if not zone1.is_empty:
+                    road_buffers.append((zone1, 5))
+                    
+            # Zone 2: 50-200m
+            if not buffer_200.is_empty:
+                zone2 = buffer_200.difference(buffer_50)
+                if not zone2.is_empty:
+                    road_buffers.append((zone2, 4))
+                    
+            # Zone 3: 200-500m
+            if not buffer_500.is_empty:
+                zone3 = buffer_500.difference(buffer_200)
+                if not zone3.is_empty:
+                    road_buffers.append((zone3, 3))
+                    
+            # Zone 4: 500-1000m
+            if not buffer_1000.is_empty:
+                zone4 = buffer_1000.difference(buffer_500)
+                if not zone4.is_empty:
+                    road_buffers.append((zone4, 2))
+                    
+            # Zone 5: Beyond 1000m
+            zone5 = aoi_gdf.geometry.unary_union.difference(buffer_1000)
+            if not zone5.is_empty:
+                road_buffers.append((zone5, 1))
+                
+            # Create GeoDataFrame from valid buffers
+            if road_buffers:
+                road_suitability = gpd.GeoDataFrame(
+                    {'geometry': [geom for geom, _ in road_buffers],
+                     'road_score': [score for _, score in road_buffers]},
+                    crs=aoi_gdf.crs
+                )
+            else:
+                emit_progress("Warning: No valid buffer zones created", socketio, session_id)
+                road_suitability = gpd.GeoDataFrame(
+                    {'geometry': [aoi_gdf.geometry.unary_union],
+                     'road_score': [1]},
+                    crs=aoi_gdf.crs
+                )
+            
+        except Exception as e:
+            emit_progress(f"Error creating buffer zones: {str(e)}", socketio, session_id)
+            logger.error(f"Buffer creation error: {str(e)}")
+            return grid_gdf
+            
+        emit_progress("Joining road suitability to grid", socketio, session_id)
+        grid_gdf = gpd.sjoin(grid_gdf, road_suitability, how="left", predicate="intersects")
+        grid_gdf['road_score'] = grid_gdf['road_score'].fillna(1)
+        
+        emit_progress("Finding nearest settlements for each grid cell", socketio, session_id)
+        grid_with_settlements = gpd.sjoin_nearest(
+            grid_gdf, settlements_gdf,
+            how="left", distance_col="settlement_distance",
+            lsuffix='grid', rsuffix='settlement'
+        )
+        
+        grid_with_settlements['settlement_distance'] = grid_with_settlements['settlement_distance'].fillna(np.inf)
+        
+        emit_progress("Calculating settlement suitability scores", socketio, session_id)
+        
+        # Settlement score (weight: 0.6)
+        grid_with_settlements['settlement_score'] = grid_with_settlements['settlement_distance'].apply(
+            lambda x: 5 if x < 100 else (4 if x < 300 else (3 if x < 600 else (2 if x < 1000 else 1)))
+        )
+        
+        # Combined weighted score
+        grid_with_settlements['combined_score'] = (
+            0.4 * grid_with_settlements['road_score'] + 
+            0.6 * grid_with_settlements['settlement_score']
+        )
+        
+        # Normalize combined score to 1-5 range
+        min_score = grid_with_settlements['combined_score'].min()
+        max_score = grid_with_settlements['combined_score'].max()
+        grid_with_settlements['combined_score'] = (
+            (grid_with_settlements['combined_score'] - min_score) / (max_score - min_score) * 4 + 1
+        )
+        
+        return grid_with_settlements
+        
+    except Exception as e:
+        emit_progress(f"Error in calculate_proximity: {str(e)}", socketio, session_id)
+        logger.error(f"Error in calculate_proximity: {str(e)}")
+        traceback.print_exc()
+        return grid_gdf
 
 def perform_clustering(grid_gdf, n_clusters=5, socketio=None, session_id=None):
     emit_progress(f"Performing clustering with {n_clusters} clusters", socketio, session_id)
@@ -213,82 +285,211 @@ def create_scale_bar(ax, length=10, units='km', subdivisions=5):
     ax.set_xlim(0, length)
     ax.set_ylim(-0.5, 1)
     ax.axis('off')
-def create_suitability_map(grid_gdf, score_column, title, output_path, aoi_gdf,  socketio=None, session_id=None):
+    
+def create_markers_map(grid_gdf, aoi_gdf, socketio=None, session_id=None):
+    """
+    Create a simple map showing only collection points without basemap
+    """
+    try:
+        # Create figure
+        fig, ax = plt.subplots(figsize=(20, 20))
+        
+        # Filter highly suitable areas
+        highly_suitable = grid_gdf[grid_gdf['Suitability_Class'] == 'Highly Suitable']
+        
+        # Perform DBSCAN clustering
+        coords = np.array([[geom.centroid.x, geom.centroid.y] 
+                          for geom in highly_suitable.geometry])
+        
+        clustering = DBSCAN(
+            eps=50,  # 50 meters clustering distance
+            min_samples=1
+        ).fit(coords)
+        
+        highly_suitable['cluster'] = clustering.labels_
+        
+        # Plot AOI boundary
+        aoi_gdf.boundary.plot(ax=ax, color='black', linewidth=1.5, alpha=0.7)
+        
+        # Create markers for each cluster
+        markers_data = []
+        for cluster_id in range(clustering.labels_.max() + 1):
+            cluster_points = highly_suitable[highly_suitable['cluster'] == cluster_id]
+            cluster_centroid = cluster_points.geometry.unary_union.centroid
+            
+            # Plot marker as a pin
+            ax.plot(cluster_centroid.x, cluster_centroid.y, 
+                   marker='^',  # Triangle marker for pin appearance
+                   color='red',
+                   markersize=15,
+                   markeredgecolor='black',
+                   markeredgewidth=1,
+                   zorder=5)
+            
+            # Simple label with just the site number
+            ax.annotate(f'Site {len(markers_data) + 1}',
+                       (cluster_centroid.x, cluster_centroid.y),
+                       xytext=(5, 5),
+                       textcoords='offset points',
+                       fontsize=10,
+                       bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
+            
+            markers_data.append({
+                'site_id': len(markers_data) + 1,
+                'x_coord': cluster_centroid.x,
+                'y_coord': cluster_centroid.y
+            })
+        
+        # Add simple legend
+        ax.legend(['Area Boundary', 'Collection Points'], 
+                 loc='upper right',
+                 bbox_to_anchor=(1.1, 1))
+        
+        # Add north arrow
+        ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction',
+                   horizontalalignment='center', verticalalignment='center',
+                   fontsize=18, fontweight='bold',
+                   path_effects=[pe.withStroke(linewidth=3, foreground="w")])
+        
+        # Add scale bar
+        scalebar = ScaleBar(1, location='lower right')
+        ax.add_artist(scalebar)
+        
+        # Add gridlines
+        ax.grid(True, linestyle='--', alpha=0.5)
+        
+        # Format axis labels
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1000:.0f}'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y/1000:.0f}'))
+        
+        # Add title
+        ax.set_title('Waste Collection Points', fontsize=16, pad=20)
+        
+        # Add coordinate system info
+        map_info = (
+            'Coordinate System: Arc 1960 UTM Zone 37S\n'
+            'Projection: Transverse Mercator\n'
+            'Datum: Arc 1960\n'
+            'Units: Meters'
+        )
+        plt.text(0.02, 0.02, map_info, transform=ax.transAxes, fontsize=8,
+                verticalalignment='bottom',
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+        
+        # Save map
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        map_path = os.path.join('output', f'collection_points_simple_{timestamp}.png')
+        plt.savefig(map_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Create and save markers data to CSV and Excel
+        markers_df = pd.DataFrame(markers_data)
+        csv_path = os.path.join('output', f'collection_points_{timestamp}.csv')
+        excel_path = os.path.join('output', f'collection_points_{timestamp}.xlsx')
+        
+        markers_df.to_csv(csv_path, index=False)
+        markers_df.to_excel(excel_path, index=False)
+        
+        return map_path, csv_path, excel_path, markers_df
+        
+    except Exception as e:
+        emit_progress(f"Error creating simple collection points map: {str(e)}", 
+                     socketio, session_id)
+        logger.error(f"Error creating simple collection points map: {str(e)}")
+        return None, None, None, None
+    
+def create_suitability_map(grid_gdf, score_column, title, output_path, aoi_gdf, socketio=None, session_id=None):
     emit_progress(f"Creating suitability map: {title}", socketio, session_id)
     
-    fig, ax = plt.subplots(figsize=(12, 10))
-    
-    cmap = colors.LinearSegmentedColormap.from_list("custom", 
-        ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641'], N=256)
-    norm = colors.BoundaryNorm([1, 2, 3, 4, 5, 6], cmap.N)
-    
-    # Plot suitability grid
-    grid_gdf.plot(column=score_column, ax=ax, cmap=cmap, norm=norm, legend=False)
-    
-   
-    
-    # Plot area of interest boundary
-    aoi_gdf.boundary.plot(ax=ax, edgecolor='black', linewidth=1.5, label='Area of Interest Boundary')
-    
-    ax.set_title(f'{title}', fontsize=18, fontweight='bold', y=1.05)
-    ax.set_xlabel('Easting (meters)', fontsize=12)
-    ax.set_ylabel('Northing (meters)', fontsize=12)
-    
-    # Add north arrow
-    ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction', 
-                horizontalalignment='center', verticalalignment='center',
-                fontsize=18, fontweight='bold', path_effects=[pe.withStroke(linewidth=3, foreground="w")])
-    ax.arrow(0.98, 0.96, 0, 0.02, head_width=0.01, head_length=0.01, 
-             fc='k', ec='k', transform=ax.transAxes)
-    
-    # Set gridlines and ticks on all four sides
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1000:.0f}'))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y/1000:.0f}'))
-    ax.tick_params(axis='both', which='major', labelsize=10)
-    ax.tick_params(top=True, bottom=True, left=True, right=True, labeltop=True, labelbottom=True, labelleft=True, labelright=True)
-    
-    # Adjust layout
-    plt.tight_layout()
-    
-    # Create new axes for the bottom row
-    bottom_ax = fig.add_axes([0.1, 0.02, 0.8, 0.15])
-    bottom_ax.axis('off')
-    
-    # Add legend
-    legend_elements = [
-        mpatches.Patch(color='#d7191c', label='Not suitable'),
-        mpatches.Patch(color='#fdae61', label='Less suitable'),
-        mpatches.Patch(color='#ffffbf', label='Moderately suitable'),
-        mpatches.Patch(color='#a6d96a', label='Suitable'),
-        mpatches.Patch(color='#1a9641', label='Highly suitable'),
-        Line2D([0], [0], color='black', lw=1, label='Roads')
-
-
-    ]
-    legend = bottom_ax.legend(handles=legend_elements, loc='center left', fontsize=10, bbox_to_anchor=(0, 0.5))
-    
-    # Add custom scale bar
-    scale_ax = fig.add_axes([0.4, 0.05, 0.2, 0.03])  # Adjust position as needed
-    create_scale_bar(scale_ax, length=10, units='km', subdivisions=5)
-    
-    # Add map information
-    info_text = 'Coordinate system: Arc 1960 UTM Zone 37S\nProjection: Transverse Mercator\nDatum: Arc 1960'
-    bottom_ax.text(1, 0.5, info_text, ha='right', va='center', fontsize=10, transform=bottom_ax.transAxes)
-    
-    # Adjust subplot to make room for title and bottom information
-    plt.subplots_adjust(top=0.95, bottom=0.2)
-    
-    # Add neatline
-    fig.patch.set_linewidth(2)
-    fig.patch.set_edgecolor('black')
-    
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    
-    emit_progress(f"Suitability map saved: {output_path}", socketio, session_id)
-    logger.info(f"Suitability map saved: {output_path}")
-
+    try:
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Create custom colormap
+        cmap = colors.LinearSegmentedColormap.from_list("custom", 
+            ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641'], N=256)
+        
+        # Create normalization
+        norm = colors.BoundaryNorm([1, 2, 3, 4, 5, 6], cmap.N)
+        
+        # Plot suitability grid using GeoDataFrame's plot method
+        grid_gdf.plot(
+            column=score_column,
+            ax=ax,
+            cmap=cmap,
+            legend=True,
+            legend_kwds={
+                'label': 'Suitability Score',
+                'orientation': 'vertical'
+            }
+        )
+        
+        # Plot area of interest boundary
+        aoi_gdf.boundary.plot(
+            ax=ax,
+            edgecolor='black',
+            linewidth=1.5,
+            label='Area of Interest Boundary'
+        )
+        
+        # Set title and labels
+        ax.set_title(f'{title}', fontsize=18, fontweight='bold', y=1.05)
+        ax.set_xlabel('Easting (meters)', fontsize=12)
+        ax.set_ylabel('Northing (meters)', fontsize=12)
+        
+        # Add north arrow
+        ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction', 
+                    horizontalalignment='center', verticalalignment='center',
+                    fontsize=18, fontweight='bold',
+                    path_effects=[pe.withStroke(linewidth=3, foreground="w")])
+        ax.arrow(0.98, 0.96, 0, 0.02, head_width=0.01, head_length=0.01, 
+                 fc='k', ec='k', transform=ax.transAxes)
+        
+        # Set gridlines and ticks
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1000:.0f}'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y/1000:.0f}'))
+        ax.tick_params(axis='both', which='major', labelsize=10)
+        
+        # Add custom legend
+        legend_elements = [
+            mpatches.Patch(color='#d7191c', label='Not suitable'),
+            mpatches.Patch(color='#fdae61', label='Less suitable'),
+            mpatches.Patch(color='#ffffbf', label='Moderately suitable'),
+            mpatches.Patch(color='#a6d96a', label='Suitable'),
+            mpatches.Patch(color='#1a9641', label='Highly suitable')
+        ]
+        ax.legend(handles=legend_elements, loc='center left', 
+                 bbox_to_anchor=(1.05, 0.5), title='Suitability Classes')
+        
+        # Add scale bar
+        scalebar = ScaleBar(1, location='lower right', box_alpha=0.5)
+        ax.add_artist(scalebar)
+        
+        # Add map information
+        map_info = (
+            'Coordinate System: Arc 1960 UTM Zone 37S\n'
+            'Projection: Transverse Mercator\n'
+            'Datum: Arc 1960\n'
+            'Units: Meters'
+        )
+        plt.text(0.02, 0.02, map_info, transform=ax.transAxes, fontsize=8,
+                verticalalignment='bottom',
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        emit_progress(f"Suitability map saved: {output_path}", socketio, session_id)
+        logger.info(f"Suitability map saved: {output_path}")
+        
+    except Exception as e:
+        emit_progress(f"Error creating suitability map: {str(e)}", socketio, session_id)
+        logger.error(f"Error creating suitability map: {str(e)}")
+        traceback.print_exc()
+        
+        
 def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
     emit_progress("Starting waste collection optimization process", socketio, session_id)
     
@@ -325,10 +526,37 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
     
     grid_gdf = calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, aoi_boundary, socketio, session_id)
     
+    # Validate scores before creating maps
+    if 'road_score' not in grid_gdf.columns:
+        emit_progress("Error: road_score column missing from grid", socketio, session_id)
+        return None
+    
+    if 'settlement_score' not in grid_gdf.columns:
+        emit_progress("Error: settlement_score column missing from grid", socketio, session_id)
+        return None
+    
+    if 'combined_score' not in grid_gdf.columns:
+        emit_progress("Error: combined_score column missing from grid", socketio, session_id)
+        return None
+    
     create_suitability_map(grid_gdf, 'road_score', "Road Suitability", "output/road_suitability.png", aoi_boundary, socketio, session_id)
     create_suitability_map(grid_gdf, 'settlement_score', "Settlement Suitability", "output/settlement_suitability.png", aoi_boundary, socketio, session_id)
     create_suitability_map(grid_gdf, 'combined_score', "Combined Suitability", "output/combined_suitability.png", aoi_boundary, socketio, session_id)
     
+    grid_gdf['Suitability_Class'] = pd.cut(
+        grid_gdf['combined_score'],
+        bins=[0, 2, 2.75, 3.5, 4.25, 5],
+        labels=['Not Suitable', 'Less Suitable', 'Moderately Suitable', 'Suitable', 'Highly Suitable']
+    )
+    
+   
+    markers_map_path, markers_csv_path, markers_excel_path, markers_df = create_markers_map(
+    grid_gdf, aoi_boundary, socketio, session_id
+    )
+    if markers_df is not None and not markers_df.empty:
+       emit_progress(f"Created markers map with {len(markers_df)} collection points", socketio, session_id)
+    else:
+       emit_progress("No suitable collection points found", socketio, session_id)
     grid_gdf = perform_clustering(grid_gdf, n_clusters=5, socketio=socketio, session_id=session_id)
     if grid_gdf is None:
         emit_progress("Clustering failed. Aborting optimization process.", socketio, session_id)
@@ -412,10 +640,13 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
     
     emit_progress("Waste collection optimization process completed", socketio, session_id)
     return optimal_locations, {
-        'road_suitability': 'output/road_suitability.png',
-        'settlement_suitability': 'output/settlement_suitability.png',
-        'combined_suitability': 'output/combined_suitability.png',
-        'optimal_locations': 'output/optimal_locations_detailed.png'
+    'road_suitability': 'output/road_suitability.png',
+    'settlement_suitability': 'output/settlement_suitability.png',
+    'combined_suitability': 'output/combined_suitability.png',
+    'optimal_locations': 'output/optimal_locations_detailed.png',
+    'markers_map': markers_map_path,
+    'markers_coordinates_csv': markers_csv_path,
+    'markers_coordinates_excel': markers_excel_path
     }
 
 @socketio.on('start_optimization')
