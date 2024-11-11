@@ -1,11 +1,12 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS, cross_origin
 from sqlalchemy import create_engine
 import os
 import logging
+from datetime import datetime
 
-from utils.spatial_operations import run_full_spatial_operations
+from utils.spatial_operations import run_full_spatial_operations, perform_network_analysis
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -23,7 +24,7 @@ socketio = SocketIO(
     cors_allowed_origins="*", 
     logger=True, 
     engineio_logger=True, 
-    async_mode='threading'  # Changed from 'eventlet' to 'threading'
+    async_mode='threading'
 )
 
 # Database connection setup
@@ -49,10 +50,7 @@ def start_spatial_operations():
         return jsonify({'error': 'session_id is required'}), 400
 
     logger.info(f"Starting spatial operations for session_id: {session_id}")
-
-    # Start the spatial operations as a background task
     socketio.start_background_task(run_full_spatial_operations, engine, session_id, socketio)
-
     return jsonify({'session_id': session_id, 'status': 'STARTED'}), 202
 
 @socketio.on('connect')
@@ -79,9 +77,100 @@ def handle_join(data):
         logger.error(f"Error in handle_join: {str(e)}")
         emit('error', {'message': 'An error occurred while joining the room.'})
 
-@app.route('/output/<filename>')
+@app.route('/output/<path:filename>')
+@cross_origin(origin='*')
 def serve_output_file(filename):
-    return send_from_directory('output', filename)
+    """Serve any file from the output directory"""
+    try:
+        return send_from_directory('output', filename)
+    except Exception as e:
+        logger.error(f"Error serving file {filename}: {str(e)}")
+        return jsonify({'error': str(e)}), 404
+
+@app.route('/get-network-map/<session_id>')
+@cross_origin(origin='*')
+def get_network_map(session_id):
+    """Serve the network analysis map"""
+    try:
+        map_path = os.path.join(os.getcwd(), 'output', 'network_analysis_latest.html')
+        if os.path.exists(map_path):
+            return send_file(
+                map_path,
+                mimetype='text/html',
+                as_attachment=False
+            )
+        else:
+            return jsonify({'error': 'Map not found'}), 404
+    except Exception as e:
+        logger.error(f"Error serving network map: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get-analysis-files/<session_id>')
+@cross_origin(origin='*')
+def get_analysis_files(session_id):
+    """Get all analysis-related files"""
+    try:
+        output_dir = 'output'
+        results = {
+            'map': f'/get-network-map/{session_id}',
+            'files': []
+        }
+        
+        for filename in os.listdir(output_dir):
+            file_path = os.path.join(output_dir, filename)
+            if os.path.isfile(file_path):
+                file_info = {
+                    'name': filename,
+                    'url': f'/output/{filename}',
+                    'type': get_file_type(filename),
+                    'size': os.path.getsize(file_path),
+                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                }
+                results['files'].append(file_info)
+        
+        results['files'].sort(key=lambda x: x['modified'], reverse=True)
+        return jsonify(results)
+    except Exception as e:
+        logger.error(f"Error getting analysis files: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+def get_file_type(filename):
+    """Determine file type based on extension"""
+    ext = filename.lower().split('.')[-1]
+    type_mapping = {
+        'html': 'map',
+        'csv': 'data',
+        'json': 'stats',
+        'png': 'image',
+        'jpg': 'image',
+        'jpeg': 'image',
+        'geojson': 'geodata'
+    }
+    return type_mapping.get(ext, 'other')
+
+@app.route('/get-images/<session_id>')
+@cross_origin(origin='*')
+def get_images(session_id):
+    """Get all images from output directory"""
+    try:
+        output_dir = 'output'
+        images = []
+        
+        for filename in os.listdir(output_dir):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                file_path = os.path.join(output_dir, filename)
+                images.append({
+                    'name': filename,
+                    'url': f'/output/{filename}',
+                    'size': os.path.getsize(file_path),
+                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+                })
+        
+        images.sort(key=lambda x: x['modified'], reverse=True)
+        return jsonify({'images': images})
+    except Exception as e:
+        logger.error(f"Error getting images: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     os.makedirs('output', exist_ok=True)
