@@ -18,6 +18,9 @@ const ResultsPage = () => {
   const [startTime, setStartTime] = useState(null);
   const [excelReportPath, setExcelReportPath] = useState(null);
   const [tiffFiles, setTiffFiles] = useState({});
+  const [networkAnalysisUrl, setNetworkAnalysisUrl] = useState(null);
+  const [isNetworkAnalysisLoading, setIsNetworkAnalysisLoading] =
+    useState(false);
 
   const socketRef = useRef(null);
   const sessionIdRef = useRef(`session_${Date.now()}`);
@@ -183,6 +186,49 @@ const ResultsPage = () => {
         setError(err.message);
       });
   };
+  useEffect(() => {
+    if (!socketRef.current) return;
+
+    socketRef.current.on('network_analysis_complete', (data) => {
+      if (data.session_id === sessionIdRef.current) {
+        // Using port 5000 for Flask API
+        const url = `${API_BASE_URL}/output/network_analysis_session_${data.session_id}_latest.html`;
+        setNetworkAnalysisUrl(url);
+        setIsNetworkAnalysisLoading(false);
+      }
+    });
+
+    return () => {
+      socketRef.current.off('network_analysis_complete');
+    };
+  }, []);
+
+  const loadNetworkAnalysis = async () => {
+    setIsNetworkAnalysisLoading(true);
+    try {
+      // Using port 5000 for Flask API
+      const url = `${API_BASE_URL}/output/network_analysis_session_${sessionIdRef.current}_latest.html`;
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('Network analysis not available');
+      }
+
+      setNetworkAnalysisUrl(url);
+      setError(null);
+    } catch (error) {
+      setError('Failed to load network analysis results');
+      console.error('Network analysis error:', error);
+      setNetworkAnalysisUrl(null);
+    } finally {
+      setIsNetworkAnalysisLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (status === 'COMPLETED') {
+      loadNetworkAnalysis();
+    }
+  }, [status]);
 
   const renderMapThumbnail = (title, imagePath, type) => (
     <div className="bg-white rounded-lg shadow-md overflow-hidden transition-all duration-300 hover:shadow-xl hover:scale-105">
@@ -284,18 +330,36 @@ const ResultsPage = () => {
         <div className="p-6">
           <div className="mb-6 flex items-center">
             <div className="w-full">
-              <h2 className="text-xl font-semibold mb-2">Status: {status}</h2>
-              <div className="h-2 bg-gray-200 rounded-full">
+              <div className="flex justify-between mb-2">
+                <h2 className="text-xl font-semibold">Status: {status}</h2>
+                {completionTime && (
+                  <span className="text-green-600">
+                    Completed at: {completionTime}
+                  </span>
+                )}
+              </div>
+              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${
-                    status === 'COMPLETED' ? 'bg-green-500' : 'bg-blue-500'
+                  className={`h-full transition-all duration-500 ${
+                    status === 'COMPLETED'
+                      ? 'bg-green-500'
+                      : status === 'RUNNING'
+                      ? 'bg-blue-500'
+                      : 'bg-gray-400'
                   }`}
-                  style={{ width: status === 'COMPLETED' ? '100%' : '50%' }}
+                  style={{
+                    width:
+                      status === 'COMPLETED'
+                        ? '100%'
+                        : status === 'RUNNING'
+                        ? '50%'
+                        : '0%',
+                    transition: 'width 0.5s ease-in-out',
+                  }}
                 ></div>
               </div>
             </div>
           </div>
-
           <div className="flex justify-between items-center mb-6">
             <div className="flex space-x-2">
               <button
@@ -326,7 +390,18 @@ const ResultsPage = () => {
               >
                 Suitability Maps
               </button>
+              <button
+                onClick={() => setActiveTab('network')}
+                className={`px-4 py-2 rounded ${
+                  activeTab === 'network'
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-200'
+                }`}
+              >
+                Network Analysis
+              </button>
             </div>
+
             <div className="flex items-center">
               <div className="relative mr-4">
                 <input
@@ -373,20 +448,38 @@ const ResultsPage = () => {
           )}
 
           <div className="mt-6">
-            <h2 className="text-xl font-semibold mb-2">Progress Messages</h2>
-            <div className="bg-gray-100 p-4 rounded-lg max-h-60 overflow-y-auto">
+            <h2 className="text-xl font-semibold mb-2 flex items-center">
+              Progress Messages
+              {status === 'RUNNING' && (
+                <span className="ml-2 text-sm text-blue-500">
+                  Time Elapsed: {getElapsedTime()}
+                </span>
+              )}
+            </h2>
+            <div className="bg-gray-100 p-4 rounded-lg max-h-[400px] overflow-y-auto">
               {messages.map((message, index) => (
-                <div key={index} className="flex items-center mb-2">
+                <div
+                  key={index}
+                  className={`flex items-center mb-2 p-2 rounded ${
+                    message.status === 'completed'
+                      ? 'bg-green-50'
+                      : message.status === 'error'
+                      ? 'bg-red-50'
+                      : 'bg-white'
+                  }`}
+                >
                   <span
-                    className={`w-3 h-3 rounded-full mr-2 ${
+                    className={`w-3 h-3 rounded-full mr-2 flex-shrink-0 ${
                       message.status === 'completed'
                         ? 'bg-green-500'
+                        : message.status === 'error'
+                        ? 'bg-red-500'
                         : 'bg-yellow-500'
                     }`}
                   ></span>
-                  <span>{message.text}</span>
+                  <span className="flex-grow">{message.text}</span>
                   {message.elapsedTime && (
-                    <span className="ml-auto text-sm text-gray-500">
+                    <span className="ml-4 text-sm text-gray-500">
                       {message.elapsedTime}
                     </span>
                   )}
@@ -403,7 +496,50 @@ const ResultsPage = () => {
           )}
         </div>
       </div>
-
+      {activeTab === 'network' && (
+        <div className="mt-6">
+          <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="p-4 border-b">
+              <h3 className="text-xl font-semibold">
+                Network Analysis Results
+              </h3>
+            </div>
+            {isNetworkAnalysisLoading ? (
+              <div className="p-8 text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+                <p className="mt-4 text-gray-500">
+                  Loading network analysis...
+                </p>
+              </div>
+            ) : networkAnalysisUrl ? (
+              <div className="h-[800px] w-full">
+                <iframe
+                  src={networkAnalysisUrl}
+                  className="w-full h-full border-none"
+                  title="Network Analysis"
+                />
+              </div>
+            ) : (
+              <div className="p-8 text-center text-gray-500">
+                {error ? (
+                  <div className="text-red-500">
+                    <p>Error loading network analysis:</p>
+                    <p>{error}</p>
+                    <button
+                      onClick={loadNetworkAnalysis}
+                      className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  'Network analysis results will appear here when the analysis is complete.'
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {selectedMap && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-4xl w-full">
