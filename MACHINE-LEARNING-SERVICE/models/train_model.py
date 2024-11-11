@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 import traceback
+import eventlet
 
 def emit_progress(session_id, message, socketio):
     try:
