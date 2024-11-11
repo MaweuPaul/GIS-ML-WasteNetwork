@@ -31,10 +31,23 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 import warnings
 import datetime
-from sqlalchemy import text
 # Import contextily for basemap
 
 import contextily as ctx
+from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from geoalchemy2 import Geometry
+from sqlalchemy.orm import Session
+from geoalchemy2.shape import from_shape
+from shapely.geometry import Point
+
+Base = declarative_base()
+
+
+
+    # Relationship with Route model (if needed)
+routes = relationship("Route", secondary="collection_point_routes", back_populates="collection_points")
         
 
 # Setup logging
@@ -51,6 +64,16 @@ def emit_progress(message, socketio, session_id):
     logger.info(f"Progress: {message}")
     if socketio and session_id:
         socketio.emit('progress_update', {'session_id': session_id, 'message': message}, room=session_id)
+
+class CollectionPoint(Base):
+    __tablename__ = 'collection_points'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    point_id = Column(Integer, unique=True, nullable=False)
+    description = Column(String, nullable=True)
+    geom = Column(Geometry('POINT', srid=21037))
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 def reproject_to_aoi_crs(gdf, socketio=None, session_id=None):
     emit_progress(f"Reprojecting data to {AOI_CRS}", socketio, session_id)
@@ -236,75 +259,68 @@ def calculate_proximity(grid_gdf, roads_gdf, settlements_gdf, aoi_gdf, socketio=
 #SAVE COLLECTION POINTS TO DB 
 def save_collection_points_to_db(markers_data, engine, socketio=None, session_id=None):
     """
-    Save or update collection points in the database
+    Save or update collection points in the database using SQLAlchemy ORM with bulk operations
     """
+
+
     try:
-        # Create points from coordinates
-        collection_points = []
-        for marker in markers_data:
-            point_geom = f"SRID=21037;POINT({marker['x_coord']} {marker['y_coord']})"
-            collection_points.append({
-                'point_id': marker['site_id'],
-                'description': f'Collection Point {marker["site_id"]}',
-                'geom': point_geom,
-                'updated_at': datetime.datetime.now()
-            })
+        # Create tables if they don't exist
+        Base.metadata.create_all(engine)
 
-        # Create a temporary table for the new points
-        temp_table_query = text("""
-        CREATE TEMP TABLE temp_collection_points (
-            point_id INT,
-            description TEXT,
-            geom geometry(Point, 21037),
-            updated_at TIMESTAMP
-        ) ON COMMIT DROP;
-        """)
-        
-        # Insert new points into temp table
-        insert_temp_query = text("""
-        INSERT INTO temp_collection_points (point_id, description, geom, updated_at)
-        VALUES (:point_id, :description, :geom::geometry, :updated_at);
-        """)
-        
-        # Upsert query using the temp table
-        upsert_query = text("""
-        INSERT INTO collection_points (point_id, description, geom, created_at, updated_at)
-        SELECT 
-            t.point_id,
-            t.description,
-            t.geom,
-            COALESCE(cp.created_at, CURRENT_TIMESTAMP),
-            t.updated_at
-        FROM temp_collection_points t
-        LEFT JOIN collection_points cp ON t.point_id = cp.point_id
-        ON CONFLICT (point_id) 
-        DO UPDATE SET
-            description = EXCLUDED.description,
-            geom = EXCLUDED.geom,
-            updated_at = EXCLUDED.updated_at
-        RETURNING id, point_id;
-        """)
-
-        with engine.begin() as connection:
-            # Create temporary table
-            connection.execute(temp_table_query)
+        with Session(engine) as session:
+            # Prepare data
+            points_to_insert = []
+            points_to_update = []
             
-            # Insert into temp table
-            for point in collection_points:
-                connection.execute(insert_temp_query, point)
+            # Get existing point_ids
+            existing_point_ids = {
+                p[0] for p in session.query(CollectionPoint.point_id).all()
+            }
             
-            # Perform upsert and get results
-            result = connection.execute(upsert_query)
-            affected_rows = result.rowcount
+            current_time = datetime.datetime.now()
 
-        emit_progress(f"Successfully saved/updated {affected_rows} collection points to database", 
-                     socketio, session_id)
+            for marker in markers_data:
+                point = Point(marker['x_coord'], marker['y_coord'])
+                point_wkb = from_shape(point, srid=21037)
+                
+                point_data = {
+                    'point_id': marker['site_id'],
+                    'description': f'Collection Point {marker["site_id"]}',
+                    'geom': point_wkb,
+                    'updated_at': current_time
+                }
+
+                if marker['site_id'] in existing_point_ids:
+                    points_to_update.append(point_data)
+                else:
+                    points_to_insert.append(point_data)
+
+            # Bulk insert new points
+            if points_to_insert:
+                session.bulk_insert_mappings(CollectionPoint, points_to_insert)
+
+            # Bulk update existing points
+            if points_to_update:
+                session.bulk_update_mappings(CollectionPoint, points_to_update)
+
+            # Commit all changes
+            session.commit()
+
+            affected_rows = len(points_to_insert) + len(points_to_update)
+
+        emit_progress(
+            f"Successfully saved/updated {affected_rows} collection points to database",
+            socketio, session_id
+        )
         return True
 
     except Exception as e:
-        emit_progress(f"Error saving collection points to database: {str(e)}", 
-                     socketio, session_id)
+        emit_progress(
+            f"Error saving collection points to database: {str(e)}",
+            socketio, session_id
+        )
         logger.error(f"Database error: {str(e)}")
+        traceback.print_exc()
         return False
 
 def perform_clustering(grid_gdf, n_clusters=5, socketio=None, session_id=None):
