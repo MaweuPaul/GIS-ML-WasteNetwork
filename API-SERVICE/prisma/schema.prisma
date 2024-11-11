@@ -257,3 +257,64 @@ model spatial_ref_sys {
   srtext    String? @db.VarChar(2048)
   proj4text String? @db.VarChar(2048)
 }
+
+
+// Collection Points
+model CollectionPoint {
+  id          Int      @id @default(autoincrement())
+  pointId     Int      @map("point_id")
+  description String?
+  geom        Unsupported("geometry(Point, 21037)")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  routes      Route[]  @relation("CollectionPointRoutes")
+
+  @@map("collection_points")
+}
+
+
+model LandfillSite {
+    id               Int      @id @default(autoincrement())
+    landfillId       Int      @unique @map("landfill_id")
+    suitabilityScore Float    @map("suitability_score")
+    suitabilityClass String   @map("suitability_class")
+    geom             Unsupported("geometry(GEOMETRY, 21037)")
+    createdAt        DateTime @default(now()) @map("created_at")
+    updatedAt        DateTime @updatedAt @map("updated_at")
+
+  
+  // Relations
+  routes           Route[]  @relation("LandfillRoutes")
+
+  @@map("landfill_sites")
+}
+
+// Routes between collection points and landfills
+model Route {
+  id                Int            @id @default(autoincrement())
+  collectionPointId Int            @map("collection_point_id")
+  landfillSiteId    Int            @map("landfill_site_id")
+  distanceMeters    Float          @map("distance_meters")
+  geom              Unsupported("geometry(LineString, 21037)")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  
+  // Relations
+  collectionPoint   CollectionPoint @relation("CollectionPointRoutes", fields: [collectionPointId], references: [id])
+  landfillSite      LandfillSite   @relation("LandfillRoutes", fields: [landfillSiteId], references: [id])
+
+  @@map("routes")
+}
+
+// Suitability Analysis Parameters
+model SuitabilityParameter {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  weight    Float
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("suitability_parameters")
+}
