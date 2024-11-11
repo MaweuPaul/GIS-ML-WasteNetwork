@@ -57,6 +57,7 @@ def emit_error(session_id, message, socketio):
             print("Error message:", message)
     except Exception as e:
         print(f"Failed to emit error message: {e}")
+        
 def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, socketio=None):
     """
     Delete existing sites and save new landfill sites to the database
@@ -165,15 +166,15 @@ def save_continuous_sites(continuous_sites_gdf, output_dir, session_id, socketio
                 export_gdf[col] = export_gdf[col].round(2)
         
         # Save as GeoJSON (good for web applications)
-        geojson_path = os.path.join(output_dir, f'continuous_sites_{session_id}_{timestamp}.geojson')
+        geojson_path = os.path.join(output_dir, f'continuous_sites_{session_id}.geojson')
         export_gdf.to_file(geojson_path, driver='GeoJSON')
         
         # Save as Shapefile (good for desktop GIS)
-        shp_path = os.path.join(output_dir, f'continuous_sites_{session_id}_{timestamp}.shp')
+        shp_path = os.path.join(output_dir, f'continuous_sites_{session_id}.shp')
         export_gdf.to_file(shp_path)
         
         # Save as CSV with coordinates (for simple table access)
-        csv_path = os.path.join(output_dir, f'continuous_sites_{session_id}_{timestamp}.csv')
+        csv_path = os.path.join(output_dir, f'continuous_sites_{session_id}.csv')
         # Add centroid coordinates to CSV
         export_gdf['centroid_lon'] = export_gdf.geometry.centroid.x
         export_gdf['centroid_lat'] = export_gdf.geometry.centroid.y
@@ -216,9 +217,9 @@ def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None
         landfill_locations['latitude'] = landfill_locations.geometry.centroid.y
         
         # Create file paths
-        geojson_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.geojson')
-        shp_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.shp')
-        csv_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.csv')
+        geojson_path = os.path.join(output_dir, f'landfill_locations_{session_id}.geojson')
+        shp_path = os.path.join(output_dir, f'landfill_locations_{session_id}.shp')
+        csv_path = os.path.join(output_dir, f'landfill_locations_{session_id}.csv')
         
         # Save in different formats
         landfill_locations.to_file(geojson_path, driver='GeoJSON')
@@ -624,7 +625,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         
         # Create full suitability map
         emit_progress(session_id, "\n🎨 Creating full suitability map...", socketio)
-        full_map_path = os.path.join(output_dir, f"suitability_map_{session_id}_{timestamp}.png")
+        full_map_path = os.path.join(output_dir, f"suitability_map_{session_id}.png")
         create_suitability_map(
             points_gdf,
             nyeri_gdf,
@@ -635,7 +636,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         # Create candidate sites map
         emit_progress(session_id, "\n🎯 Creating candidate sites map...", socketio)
         candidate_gdf = points_gdf[points_gdf['Total_Suit'] >= 3.5].copy()
-        candidate_map_path = os.path.join(output_dir, f"candidate_sites_map_{session_id}_{timestamp}.png")
+        candidate_map_path = os.path.join(output_dir, f"candidate_sites_map_{session_id}.png")
         create_candidate_map(
             candidate_gdf,
             nyeri_gdf,
@@ -659,7 +660,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         
         if continuous_sites is not None and not continuous_sites.empty:
             # Create continuous candidate sites map
-            continuous_map_path = os.path.join(output_dir, f"continuous_candidate_sites_{session_id}_{timestamp}.png")
+            continuous_map_path = os.path.join(output_dir, f"continuous_candidate_sites_{session_id}.png")
             create_continuous_candidate_map(
                 continuous_sites,
                 nyeri_gdf,
@@ -714,8 +715,8 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             emit_progress(session_id, "⚠️ Could not create continuous sites", socketio)
         
         # Save to CSV
-        full_csv_path = os.path.join(output_dir, f"full_suitability_{session_id}_{timestamp}.csv")
-        candidate_csv_path = os.path.join(output_dir, f"candidate_sites_{session_id}_{timestamp}.csv")
+        full_csv_path = os.path.join(output_dir, f"full_suitability_{session_id}.csv")
+        candidate_csv_path = os.path.join(output_dir, f"candidate_sites_{session_id}.csv")
         points_gdf.to_csv(full_csv_path, index=False)
         candidate_gdf.to_csv(candidate_csv_path, index=False)
         
