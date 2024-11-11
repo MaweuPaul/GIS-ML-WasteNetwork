@@ -212,21 +212,18 @@ def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None
         }, crs=candidate_gdf.crs)
         
         # Add coordinates as separate columns
-        landfill_locations['longitude'] = landfill_locations.geometry.x
-        landfill_locations['latitude'] = landfill_locations.geometry.y
+        landfill_locations['longitude'] = landfill_locations.geometry.centroid.x
+        landfill_locations['latitude'] = landfill_locations.geometry.centroid.y
+        
+        # Create file paths
+        geojson_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.geojson')
+        shp_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.shp')
+        csv_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.csv')
         
         # Save in different formats
-        # 1. GeoJSON for GIS applications
-        geojson_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.geojson')
         landfill_locations.to_file(geojson_path, driver='GeoJSON')
-        
-        # 2. Shapefile for desktop GIS
-        shp_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.shp')
         landfill_locations.to_file(shp_path)
-        
-        # 3. CSV for simple table format
-        csv_path = os.path.join(output_dir, f'landfill_locations_{session_id}_{timestamp}.csv')
-        landfill_locations.to_csv(csv_path, index=False)
+        landfill_locations.drop(columns=['geometry']).to_csv(csv_path, index=False)
         
         emit_progress(session_id, "\n💾 Saving landfill locations...", socketio)
         emit_progress(session_id, f"Saved {len(landfill_locations)} landfill locations:", socketio)
@@ -243,7 +240,7 @@ def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None
         
     except Exception as e:
         emit_error(session_id, f"Error saving landfill locations: {str(e)}", socketio)
-        return None    
+        return None
 
 
 
