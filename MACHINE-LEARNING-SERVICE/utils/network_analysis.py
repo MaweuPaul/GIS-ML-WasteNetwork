@@ -326,8 +326,6 @@ def calculate_collection_point_distances(routes_gdf, session_id=None, socketio=N
     except Exception as e:
         emit_error(session_id, f"Error calculating distances: {str(e)}", socketio)
         return pd.DataFrame(), {}
-
-
 def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collection_points_gdf=None, engine=None):
     """
     Perform network analysis to find optimal routes between collection points and landfill sites
@@ -338,6 +336,8 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         # Create output directory
         output_dir = os.path.join(os.getcwd(), 'output')
         os.makedirs(output_dir, exist_ok=True)
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Try to get collection points from database first
         collection_points_gdf = None
@@ -358,21 +358,18 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             emit_progress(session_id, "Falling back to dummy data...", socketio)
             nyeri_gdf, collection_points_gdf, landfill_sites_gdf = create_dummy_data(session_id, socketio)
              
-        # Ensure proper CRS
-        if not nyeri_gdf.crs:
-            nyeri_gdf.set_crs(epsg=4326, inplace=True)
-        
-        if not collection_points_gdf.crs:
-            collection_points_gdf.set_crs(epsg=4326, inplace=True)
-        
-        # Standardize CRS
-        nyeri_gdf = nyeri_gdf.to_crs(epsg=4326)
-        collection_points_gdf = collection_points_gdf.to_crs(epsg=4326)
-        landfill_sites_gdf = landfill_sites_gdf.to_crs(epsg=4326)
+        # Ensure proper CRS and standardize
+        for gdf, name in [(nyeri_gdf, 'nyeri'), 
+                         (collection_points_gdf, 'collection points'),
+                         (landfill_sites_gdf, 'landfill sites')]:
+            if not gdf.crs:
+                gdf.set_crs(epsg=4326, inplace=True)
+                emit_progress(session_id, f"Set CRS for {name} to EPSG:4326", socketio)
+            gdf.to_crs(epsg=4326, inplace=True)
 
         bounds = nyeri_gdf.total_bounds
         
-        # Get road network
+        # Get road network with fallback
         try:
             emit_progress(session_id, "📥 Downloading road network from OpenStreetMap...", socketio)
             ox.config(timeout=300)
@@ -384,6 +381,7 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                 network_type='drive',
                 simplify=True
             )
+            emit_success(session_id, "Successfully downloaded OSM network!", socketio)
         except Exception as e:
             emit_error(session_id, f"OSM download failed: {str(e)} 😞", socketio)
             
@@ -394,10 +392,8 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             else:
                 raise Exception("No database connection available for fallback. ❌")
 
-        # Project network
+        # Project everything to EPSG:21037
         G = ox.project_graph(G, to_crs='EPSG:21037')
-        
-        # Project all GeoDataFrames
         nyeri_gdf = nyeri_gdf.to_crs(epsg=21037)
         collection_points_gdf = collection_points_gdf.to_crs(epsg=21037)
         landfill_sites_gdf = landfill_sites_gdf.to_crs(epsg=21037)
@@ -405,20 +401,22 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         # Get nodes and edges
         nodes, edges = ox.graph_to_gdfs(G)
         
-        # Find nearest nodes for collection points
+        # Find nearest nodes
+        emit_progress(session_id, "🎯 Finding nearest network nodes...", socketio)
         collection_nodes = []
+        landfill_nodes = []
+        
         for idx, point in collection_points_gdf.iterrows():
             nearest = ox.distance.nearest_nodes(G, point.geometry.x, point.geometry.y)
             collection_nodes.append(nearest)
             
-        # Find nearest nodes for landfill sites using centroids
-        landfill_nodes = []
         for idx, site in landfill_sites_gdf.iterrows():
             centroid = site.geometry.centroid
             nearest = ox.distance.nearest_nodes(G, centroid.x, centroid.y)
             landfill_nodes.append(nearest)
 
         # Calculate routes
+        emit_progress(session_id, "🛣️ Calculating optimal routes...", socketio)
         routes_data = []
         total_routes = len(landfill_nodes) * len(collection_nodes)
         completed_routes = 0
@@ -460,35 +458,39 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                     emit_error(session_id, f"Error calculating route LF {landfill_id} to CP {collection_points_gdf.iloc[cp_idx]['point_id']}: {str(e)} 🚫", socketio)
                     continue
         
-        # Create routes GeoDataFrame
-        if routes_data:
-            routes_gdf = gpd.GeoDataFrame(routes_data, crs='EPSG:21037')
-        else:
+        # Create routes GeoDataFrame and calculate summaries
+        if not routes_data:
             emit_error(session_id, "No valid routes were created", socketio)
             return None
-        
-        emit_progress(session_id, "📊 Calculating collection point distances...", socketio)
+            
+        routes_gdf = gpd.GeoDataFrame(routes_data, crs='EPSG:21037')
+        emit_progress(session_id, "📊 Calculating route summaries...", socketio)
         routes_summary, summary_stats = calculate_collection_point_distances(routes_gdf, session_id, socketio)
         
         if routes_summary.empty:
             emit_error(session_id, "Failed to calculate route summary", socketio)
             return None
         
-        # Save routes summary to CSV
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        summary_path = os.path.join(output_dir, f'routes_summary_{timestamp}.csv')
-        routes_summary.to_csv(summary_path, index=False)
+        # Save outputs
+        file_paths = {}
         
-        # Save summary statistics to a separate file
-        stats_path = os.path.join(output_dir, f'summary_stats_{timestamp}.json')
+        # Save routes summary
+        summary_filename = f'routes_summary_session_{session_id}_{timestamp}.csv'
+        summary_path = os.path.join(output_dir, summary_filename)
+        routes_summary.to_csv(summary_path, index=False)
+        file_paths['routes_summary'] = summary_path
+        
+        # Save summary statistics
+        stats_filename = f'summary_stats_session_{session_id}_{timestamp}.json'
+        stats_path = os.path.join(output_dir, stats_filename)
         with open(stats_path, 'w') as f:
             json.dump(summary_stats, f, indent=4)
-        
-        # Print formatted table
-        print("\nTable: Summary of breakdown of the optimal route.\n")
-        print(routes_summary.to_string(index=False))
+        file_paths['summary_stats'] = stats_path
         
         # Create visualizations
+        emit_progress(session_id, "🗺️ Creating interactive map...", socketio)
+        
+        # Convert to WGS84 for mapping
         nyeri_gdf_wgs84 = nyeri_gdf.to_crs(epsg=4326)
         collection_points_gdf_wgs84 = collection_points_gdf.to_crs(epsg=4326)
         landfill_sites_gdf_wgs84 = landfill_sites_gdf.to_crs(epsg=4326)
@@ -497,8 +499,22 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         # Create interactive map
         m = folium.Map(
             location=[nyeri_gdf_wgs84.centroid.y.mean(), nyeri_gdf_wgs84.centroid.x.mean()],
-            zoom_start=12
+            zoom_start=12,
+            tiles='cartodbpositron'
         )
+
+        # Add title
+        title_html = '''
+        <div style="position: fixed; 
+                    top: 10px; left: 50px; width: 300px; height: 30px; 
+                    z-index:9999; font-size:20px; font-weight: bold;
+                    background-color: rgba(255, 255, 255, 0.8);
+                    border-radius: 5px; padding: 5px;
+                    font-family: Arial, sans-serif;">
+            Waste Collection Network Analysis
+        </div>
+        '''
+        m.get_root().html.add_child(folium.Element(title_html))
 
         # Add routes to map
         for idx, route in routes_gdf_wgs84.iterrows():
@@ -553,7 +569,6 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             </div>
             """
             
-            # Convert the polygon geometry to GeoJSON format
             folium.GeoJson(
                 site.geometry.__geo_interface__,
                 style_function=lambda x: {
@@ -565,24 +580,54 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                 popup=folium.Popup(popup_html, max_width=200)
             ).add_to(m)
 
-        # Save outputs
-        latest_map_path = os.path.join(output_dir, 'network_analysis_latest.html')
-        timestamped_map_path = os.path.join(output_dir, f'network_analysis_{timestamp}.html')
+        # Add legend
+        legend_html = '''
+        <div style="position: fixed; 
+                    bottom: 50px; right: 50px; 
+                    border:2px solid grey; z-index:9999; font-size:14px;
+                    background-color: rgba(255, 255, 255, 0.8);
+                    border-radius: 5px; padding: 10px;
+                    font-family: Arial, sans-serif;">
+            <p><i style="background: red; border-radius: 50%; width: 10px; height: 10px; display: inline-block;"></i> Collection Points</p>
+            <p><i style="background: green; border-radius: 2px; width: 10px; height: 10px; display: inline-block;"></i> Landfill Sites</p>
+            <p><i style="background: blue; width: 10px; height: 2px; display: inline-block;"></i> Routes</p>
+        </div>
+        '''
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+        # Save maps
+        latest_map_filename = f'network_analysis_session_{session_id}_latest.html'
+        timestamped_map_filename = f'network_analysis_session_{session_id}_{timestamp}.html'
+        
+        latest_map_path = os.path.join(output_dir, latest_map_filename)
+        timestamped_map_path = os.path.join(output_dir, timestamped_map_filename)
         
         m.save(str(latest_map_path))
         m.save(str(timestamped_map_path))
         
-        routes_path = os.path.join(output_dir, f'routes_{timestamp}.geojson')
+        file_paths.update({
+            'latest_map': latest_map_path,
+            'timestamped_map': timestamped_map_path
+        })
+        
+        # Save routes GeoJSON
+        routes_filename = f'routes_session_{session_id}_{timestamp}.geojson'
+        routes_path = os.path.join(output_dir, routes_filename)
         routes_gdf.to_file(str(routes_path), driver='GeoJSON')
+        file_paths['routes_geojson'] = routes_path
 
         emit_success(session_id, "🏁 Network analysis complete!", socketio)
         
+        # Emit completion event with file paths
+        if socketio:
+            socketio.emit('network_analysis_complete', {
+                'session_id': session_id,
+                'files': file_paths,
+                'stats': summary_stats
+            }, room=session_id)
+        
         return {
-            'interactive_map': str(latest_map_path),
-            'timestamped_map': str(timestamped_map_path),
-            'routes_geojson': str(routes_path),
-            'routes_summary': str(summary_path),
-            'summary_stats': str(stats_path),
+            'files': file_paths,
             'stats': summary_stats
         }
         
