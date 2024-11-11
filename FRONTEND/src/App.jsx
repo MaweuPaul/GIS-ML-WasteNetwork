@@ -37,7 +37,7 @@ const App = () => {
               path="/collection-schedule"
               element={<CollectionScheduleManager />}
             />
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<LandingPage />} />
           </Routes>
         </div>
       </div>
