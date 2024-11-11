@@ -31,7 +31,8 @@ class LandfillSite(Base):
     landfill_id = Column(Integer, unique=True, nullable=False)
     suitability_score = Column(Float, nullable=False)
     suitability_class = Column(String, nullable=False)
-    geom = Column(Geometry('MULTIPOLYGON', srid=21037), nullable=False)
+    # Changed to accept any geometry type
+    geom = Column(Geometry(geometry_type='GEOMETRY', srid=21037), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
@@ -58,27 +59,25 @@ def emit_error(session_id, message, socketio):
         print(f"Failed to emit error message: {e}")
 def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, socketio=None):
     """
-    Save landfill sites to the database without geometry conversion
+    Delete existing sites and save new landfill sites to the database
     """
     try:
         emit_progress(session_id, "\n🔄 Starting database export process...", socketio)
         emit_progress(session_id, f"📊 Total sites to process: {len(continuous_sites_gdf)}", socketio)
-        
-        # Check CRS and convert if necessary
-        emit_progress(session_id, "🌍 Checking coordinate reference system...", socketio)
-        if continuous_sites_gdf.crs != 'EPSG:21037':
-            emit_progress(session_id, "  • Converting to EPSG:21037...", socketio)
-            continuous_sites_gdf = continuous_sites_gdf.to_crs('EPSG:21037')
-            emit_progress(session_id, "  ✅ CRS conversion complete", socketio)
-        else:
-            emit_progress(session_id, "  ✅ CRS already correct (EPSG:21037)", socketio)
         
         session = Session(engine)
         sites_exported = 0
         sites_created = 0
         
         try:
-            emit_progress(session_id, "\n📥 Processing sites...", socketio)
+            # First, delete all existing records
+            emit_progress(session_id, "\n🗑️ Deleting existing records...", socketio)
+            deleted_count = session.query(LandfillSite).delete()
+            session.commit()
+            emit_progress(session_id, f"  ✅ Deleted {deleted_count} existing records", socketio)
+            
+            emit_progress(session_id, "\n📥 Processing new sites...", socketio)
+            current_time = func.now()
             
             for idx, row in continuous_sites_gdf.iterrows():
                 try:
@@ -87,7 +86,9 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
                         landfill_id=int(row['site_id']),
                         suitability_score=float(row['Total_Suit']),
                         suitability_class=str(row['Suitability_Class']),
-                        geom=from_shape(row.geometry, srid=21037)  # Save geometry as-is
+                        geom=from_shape(row.geometry, srid=21037),
+                        created_at=current_time,
+                        updated_at=current_time
                     )
                     session.add(site)
                     sites_created += 1
@@ -114,12 +115,12 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
             
             # Final summary
             emit_progress(session_id, "\n📊 Export Summary:", socketio)
-            emit_progress(session_id, f"  • Total sites processed: {sites_exported}", socketio)
-            emit_progress(session_id, f"  • Sites created: {sites_created}", socketio)
+            emit_progress(session_id, f"  • Previous records deleted: {deleted_count}", socketio)
+            emit_progress(session_id, f"  • New sites created: {sites_created}", socketio)
             emit_progress(session_id, "✨ Database export completed successfully!", socketio)
             
             return {
-                'sites_exported': sites_exported,
+                'deleted_count': deleted_count,
                 'sites_created': sites_created
             }
             
@@ -680,8 +681,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                 )
                 if db_results:
                     stats['database'] = {
-                        'sites_exported': db_results['sites_exported'],
-                        'sites_updated': db_results['sites_updated'],
+                        'deleted_count': db_results['deleted_count'],
                         'sites_created': db_results['sites_created']
                     }
             
@@ -763,7 +763,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             'candidate_map_path': candidate_map_path,
             'continuous_map_path': continuous_map_path,
             'continuous_geojson': continuous_geojson,
-            'continuous_shapefile': continuous_shapefile,
+            'continuous_shapefile': continuous_shapefile if 'continuous_shapefile' in locals() else None,
             'full_csv_path': full_csv_path,
             'candidate_csv_path': candidate_csv_path,
             'stats': stats
