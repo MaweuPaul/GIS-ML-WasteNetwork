@@ -12,6 +12,7 @@ import osmnx as ox
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 import json 
+from shapely import wkt
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +51,39 @@ def emit_success(session_id, message, socketio):
         print(f"Success: {formatted_message}")
     except Exception as e:
         print(f"Error emitting success: {e}")
+        
+def get_collection_points_from_db(engine, session_id=None, socketio=None):
+    """Fetch collection points from database"""
+    try:
+        emit_progress(session_id, "🔄 Fetching collection points from database...", socketio)
+        
+        query = """
+        SELECT 
+            point_id,
+            description,
+            ST_AsText(geom) as geometry
+        FROM collection_points;
+        """
+        
+        # Read from database
+        df = pd.read_sql_query(query, engine)
+        
+        if df.empty:
+            emit_error(session_id, "No collection points found in database", socketio)
+            return None
+            
+        # Convert WKT to geometry
+        df['geometry'] = df['geometry'].apply(lambda x: wkt.loads(x))
+        
+        # Create GeoDataFrame
+        gdf = gpd.GeoDataFrame(df, geometry='geometry', crs='EPSG:21037')
+        
+        emit_success(session_id, f"Successfully fetched {len(gdf)} collection points!", socketio)
+        return gdf
+        
+    except Exception as e:
+        emit_error(session_id, f"Error fetching collection points: {str(e)}", socketio)
+        return None
 
 def create_dummy_data(session_id=None, socketio=None):
     """Create dummy data with 60 collection points and 2 landfill sites"""
@@ -269,10 +303,21 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         output_dir = os.path.join(os.getcwd(), 'output')
         os.makedirs(output_dir, exist_ok=True)
         
-        # Get dummy data if needed
+        # Try to get collection points from database first
+        collection_points_gdf = None
+        if engine:
+            try:
+                collection_points_gdf = get_collection_points_from_db(engine, session_id, socketio)
+                emit_success(session_id, "Successfully loaded collection points from database!", socketio)
+            except Exception as e:
+                emit_error(session_id, f"Failed to fetch from database: {str(e)}", socketio)
+        
+        # Fall back to dummy data if database fetch failed
         if collection_points_gdf is None:
+            emit_progress(session_id, "Falling back to dummy data...", socketio)
             nyeri_gdf, collection_points_gdf, landfill_sites_gdf = create_dummy_data(session_id, socketio)
         else:
+            # If we got collection points from DB, still need dummy landfill sites
             _, _, landfill_sites_gdf = create_dummy_data(session_id, socketio)
 
         # Ensure proper CRS
