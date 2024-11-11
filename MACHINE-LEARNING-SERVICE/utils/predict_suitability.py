@@ -13,6 +13,28 @@ import eventlet
 import joblib
 from scipy.ndimage import gaussian_filter
 
+from sqlalchemy import Column, Integer, Float, String, DateTime, func
+from sqlalchemy.ext.declarative import declarative_base
+from geoalchemy2 import Geometry
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from geoalchemy2.shape import from_shape
+from shapely.ops import unary_union
+
+Base = declarative_base()
+
+
+class LandfillSite(Base):
+    __tablename__ = 'landfill_sites'
+
+    id = Column(Integer, primary_key=True)
+    landfill_id = Column(Integer, unique=True, nullable=False)
+    suitability_score = Column(Float, nullable=False)
+    suitability_class = Column(String, nullable=False)
+    geom = Column(Geometry('MULTIPOLYGON', srid=21037), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
 def emit_progress(session_id, message, socketio):
     try:
         if socketio:
@@ -34,7 +56,82 @@ def emit_error(session_id, message, socketio):
             print("Error message:", message)
     except Exception as e:
         print(f"Failed to emit error message: {e}")
-
+def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, socketio=None):
+    """
+    Save landfill sites to the database without geometry conversion
+    """
+    try:
+        emit_progress(session_id, "\n🔄 Starting database export process...", socketio)
+        emit_progress(session_id, f"📊 Total sites to process: {len(continuous_sites_gdf)}", socketio)
+        
+        # Check CRS and convert if necessary
+        emit_progress(session_id, "🌍 Checking coordinate reference system...", socketio)
+        if continuous_sites_gdf.crs != 'EPSG:21037':
+            emit_progress(session_id, "  • Converting to EPSG:21037...", socketio)
+            continuous_sites_gdf = continuous_sites_gdf.to_crs('EPSG:21037')
+            emit_progress(session_id, "  ✅ CRS conversion complete", socketio)
+        else:
+            emit_progress(session_id, "  ✅ CRS already correct (EPSG:21037)", socketio)
+        
+        session = Session(engine)
+        sites_exported = 0
+        sites_created = 0
+        
+        try:
+            emit_progress(session_id, "\n📥 Processing sites...", socketio)
+            
+            for idx, row in continuous_sites_gdf.iterrows():
+                try:
+                    # Create new site
+                    site = LandfillSite(
+                        landfill_id=int(row['site_id']),
+                        suitability_score=float(row['Total_Suit']),
+                        suitability_class=str(row['Suitability_Class']),
+                        geom=from_shape(row.geometry, srid=21037)  # Save geometry as-is
+                    )
+                    session.add(site)
+                    sites_created += 1
+                    
+                    # Commit each site individually
+                    session.commit()
+                    
+                    sites_exported += 1
+                    emit_progress(
+                        session_id,
+                        f"  ✅ Successfully created site {row['site_id']} "
+                        f"(Score: {row['Total_Suit']:.2f}, Class: {row['Suitability_Class']})",
+                        socketio
+                    )
+                    
+                except Exception as e:
+                    session.rollback()
+                    emit_error(
+                        session_id,
+                        f"❌ Error processing site {row['site_id']}: {str(e)}",
+                        socketio
+                    )
+                    continue
+            
+            # Final summary
+            emit_progress(session_id, "\n📊 Export Summary:", socketio)
+            emit_progress(session_id, f"  • Total sites processed: {sites_exported}", socketio)
+            emit_progress(session_id, f"  • Sites created: {sites_created}", socketio)
+            emit_progress(session_id, "✨ Database export completed successfully!", socketio)
+            
+            return {
+                'sites_exported': sites_exported,
+                'sites_created': sites_created
+            }
+            
+        finally:
+            session.close()
+            emit_progress(session_id, "🔒 Database session closed", socketio)
+        
+    except Exception as e:
+        emit_error(session_id, f"❌ Database export error: {str(e)}", socketio)
+        traceback.print_exc()
+        return None
+    
 def classify_suitability(score):
     if score <= 2.0:
         return 'Not Suitable'
@@ -47,7 +144,57 @@ def classify_suitability(score):
     else:
         return 'Highly Suitable'
     
-    
+def save_continuous_sites(continuous_sites_gdf, output_dir, session_id, socketio=None):
+    """
+    Save continuous candidate sites in multiple formats for network analysis
+    """
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Ensure the GeoDataFrame has all necessary columns
+        export_gdf = continuous_sites_gdf.copy()
+        
+        # Add area in hectares for easier reference
+        export_gdf['area_ha'] = export_gdf['area_m2'] / 10000
+        
+        # Round numeric columns to 2 decimal places
+        numeric_columns = ['Total_Suit', 'area_ha']
+        for col in numeric_columns:
+            if col in export_gdf.columns:
+                export_gdf[col] = export_gdf[col].round(2)
+        
+        # Save as GeoJSON (good for web applications)
+        geojson_path = os.path.join(output_dir, f'continuous_sites_{session_id}_{timestamp}.geojson')
+        export_gdf.to_file(geojson_path, driver='GeoJSON')
+        
+        # Save as Shapefile (good for desktop GIS)
+        shp_path = os.path.join(output_dir, f'continuous_sites_{session_id}_{timestamp}.shp')
+        export_gdf.to_file(shp_path)
+        
+        # Save as CSV with coordinates (for simple table access)
+        csv_path = os.path.join(output_dir, f'continuous_sites_{session_id}_{timestamp}.csv')
+        # Add centroid coordinates to CSV
+        export_gdf['centroid_lon'] = export_gdf.geometry.centroid.x
+        export_gdf['centroid_lat'] = export_gdf.geometry.centroid.y
+        export_gdf.drop(columns=['geometry']).to_csv(csv_path, index=False)
+        
+        emit_progress(session_id, "\n💾 Saving continuous sites...", socketio)
+        emit_progress(session_id, f"Saved {len(export_gdf)} continuous sites:", socketio)
+        emit_progress(session_id, f"  • GeoJSON: {geojson_path}", socketio)
+        emit_progress(session_id, f"  • Shapefile: {shp_path}", socketio)
+        emit_progress(session_id, f"  • CSV: {csv_path}", socketio)
+        
+        return {
+            'geojson_path': geojson_path,
+            'shapefile_path': shp_path,
+            'csv_path': csv_path,
+            'site_count': len(export_gdf)
+        }
+        
+    except Exception as e:
+        emit_error(session_id, f"Error saving continuous sites: {str(e)}", socketio)
+        return None
+
 def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None):
     """
     Save identified landfill locations in formats suitable for network analysis
@@ -267,7 +414,6 @@ def create_candidate_map(gdf, nyeri_gdf, title, output_path):
     plt.close()
     
     return output_path
-
 def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_area=10000, socketio=None, session_id=None):
     """
     Create continuous areas from candidate sites by buffering and dissolving
@@ -275,47 +421,49 @@ def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_are
     try:
         emit_progress(session_id, "Creating continuous candidate areas...", socketio)
         
-        # Create buffer around points
+        # Create buffer around points with a larger initial buffer
         buffered = candidate_gdf.copy()
         buffered.geometry = buffered.geometry.buffer(buffer_distance)
         
-        # Create a unique identifier for dissolving
-        buffered['dissolve_id'] = 1
+        # Create clusters of points that are close together
+        buffered['cluster_id'] = 1
         
-        # Specify numeric columns to aggregate
-        numeric_columns = ['Total_Suit']
-        agg_dict = {col: 'mean' for col in numeric_columns if col in buffered.columns}
+        # Calculate mean suitability score for each point
+        buffered['mean_suit'] = buffered['Total_Suit']
         
-        # Dissolve overlapping buffers
+        # Dissolve overlapping buffers while maintaining mean suitability
         dissolved = buffered.dissolve(
-            by='dissolve_id',
-            aggfunc=agg_dict,
-            as_index=False
-        )
+            by='cluster_id',
+            aggfunc={
+                'Total_Suit': 'mean',
+                'mean_suit': 'mean'
+            }
+        ).reset_index()
         
         # Explode multi-polygons into single polygons
-        continuous_sites = dissolved.explode(index_parts=True)
-        continuous_sites = continuous_sites.reset_index(drop=True)
+        continuous_sites = dissolved.explode(index_parts=True).reset_index(drop=True)
         
         # Calculate area and filter by minimum size
         continuous_sites['area_m2'] = continuous_sites.geometry.area
         continuous_sites = continuous_sites[continuous_sites['area_m2'] >= min_area]
         
-        # Smooth the polygons slightly
+        # Smooth the polygons
         continuous_sites.geometry = continuous_sites.geometry.buffer(0)
         
-        # Add site IDs and calculate centroids
-        continuous_sites = continuous_sites.reset_index(drop=True)
-        continuous_sites['site_id'] = range(1, len(continuous_sites) + 1)
-        continuous_sites['centroid_x'] = continuous_sites.geometry.centroid.x
-        continuous_sites['centroid_y'] = continuous_sites.geometry.centroid.y
-        
-        # Add suitability class based on mean Total_Suit
-        if 'Total_Suit' in continuous_sites.columns:
+        if len(continuous_sites) > 0:
+            # Add site IDs and calculate centroids
+            continuous_sites['site_id'] = range(1, len(continuous_sites) + 1)
+            continuous_sites['centroid_x'] = continuous_sites.geometry.centroid.x
+            continuous_sites['centroid_y'] = continuous_sites.geometry.centroid.y
+            
+            # Add suitability class based on mean Total_Suit
             continuous_sites['Suitability_Class'] = continuous_sites['Total_Suit'].apply(classify_suitability)
-        
-        emit_progress(session_id, f"Created {len(continuous_sites)} continuous sites", socketio)
-        return continuous_sites
+            
+            emit_progress(session_id, f"Created {len(continuous_sites)} continuous sites", socketio)
+            return continuous_sites
+        else:
+            emit_progress(session_id, "No continuous sites met the minimum area requirement", socketio)
+            return None
         
     except Exception as e:
         emit_error(session_id, f"Error creating continuous sites: {str(e)}", socketio)
@@ -323,7 +471,7 @@ def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_are
         return None
 
 def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, output_path):
-    """Create and save a map of continuous candidate sites"""
+    """Create and save a map of continuous candidate sites without labels"""
     fig, ax = plt.subplots(figsize=(15, 10))
     
     # Plot base map
@@ -336,16 +484,6 @@ def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, outp
         alpha=0.7,
         label='Suitable Areas'
     )
-    
-    # Add site labels
-    for idx, row in continuous_sites_gdf.iterrows():
-        centroid = row.geometry.centroid
-        ax.annotate(f'Site {row["site_id"]}\n{row["area_m2"]/10000:.1f} ha',
-                   (centroid.x, centroid.y),
-                   xytext=(3, 3),
-                   textcoords="offset points",
-                   fontsize=8,
-                   bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
     
     # Customize the legend
     ax.legend(
@@ -381,8 +519,14 @@ def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, outp
     
     return output_path
 
-def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=50, session_id=None, socketio=None):
+def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=50, session_id=None, socketio=None,engine=None):
     try:
+        stats = {
+            'full_map': {},
+            'candidate_sites': {},
+            'continuous_sites': {}
+        }
+               
         emit_progress(session_id, "🚀 Starting suitability prediction...", socketio)
         
         # Load model and scaler
@@ -505,14 +649,15 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         emit_progress(session_id, "\n🔄 Creating continuous candidate areas...", socketio)
         continuous_sites = create_continuous_candidate_sites(
             candidate_gdf,
-            buffer_distance=50,  # 50m buffer
-            min_area=10000,     # 1 hectare minimum
+            buffer_distance=150,  # 50m buffer
+            min_area=5000,     # 1 hectare minimum
             socketio=socketio,
             session_id=session_id
         )
         
         continuous_map_path = None
         continuous_geojson = None
+        
         
         if continuous_sites is not None and not continuous_sites.empty:
             # Create continuous candidate sites map
@@ -524,9 +669,41 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                 continuous_map_path
             )
             
-            # Save continuous sites to files
-            continuous_geojson = os.path.join(output_dir, f"continuous_sites_{session_id}_{timestamp}.geojson")
-            continuous_sites.to_file(continuous_geojson, driver='GeoJSON')
+            # First save to database if engine is provided
+            if engine:
+                emit_progress(session_id, "\n💾 Saving to database...", socketio)
+                db_results = save_continuous_sites_to_db(
+                    continuous_sites,
+                    engine,
+                    session_id,
+                    socketio
+                )
+                if db_results:
+                    stats['database'] = {
+                        'sites_exported': db_results['sites_exported'],
+                        'sites_updated': db_results['sites_updated'],
+                        'sites_created': db_results['sites_created']
+                    }
+            
+            # Then save to files
+            continuous_files = save_continuous_sites(
+                continuous_sites,
+                output_dir,
+                session_id,
+                socketio
+            )
+            
+            if continuous_files:
+                continuous_geojson = continuous_files['geojson_path']
+                continuous_shapefile = continuous_files['shapefile_path']
+                stats['continuous_sites'] = {
+                    'total_sites': continuous_files['site_count'],
+                    'total_area_ha': continuous_sites['area_m2'].sum() / 10000,
+                    'min_area_ha': continuous_sites['area_m2'].min() / 10000,
+                    'max_area_ha': continuous_sites['area_m2'].max() / 10000,
+                    'mean_area_ha': continuous_sites['area_m2'].mean() / 10000
+                }
+        
             
             # Add continuous sites statistics
             stats['continuous_sites'] = {
@@ -586,6 +763,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             'candidate_map_path': candidate_map_path,
             'continuous_map_path': continuous_map_path,
             'continuous_geojson': continuous_geojson,
+            'continuous_shapefile': continuous_shapefile,
             'full_csv_path': full_csv_path,
             'candidate_csv_path': candidate_csv_path,
             'stats': stats
