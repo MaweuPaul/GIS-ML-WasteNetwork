@@ -16,6 +16,7 @@ const dataRoutes = require('./Routes/dataRoutes.js');
 const specialPickupRoutes = require('./Routes/specialPickupRoutes.js');
 const reportIncidence = require('./Routes/reportIssueRoute.js');
 const zones = require('./Routes/zoneRoute.js');
+const wasteManagementRoutes = require('./Routes/wasteManagementRoute.js');
 
 dotenv.config();
 
@@ -65,6 +66,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   next();
 });
+app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/soils', soilRoutes);
 app.use('/api/protected-areas', protectedAreaRoutes);
@@ -80,6 +82,8 @@ app.use('/api/data', dataRoutes);
 app.use('/api/specialPickup', specialPickupRoutes);
 app.use('/api/incidents', reportIncidence);
 app.use('/api/zones', zones);
+
+app.use('/api/waste-management', wasteManagementRoutes);
 
 // Catch-all route for API
 app.use('/api/*', (req, res) => {
