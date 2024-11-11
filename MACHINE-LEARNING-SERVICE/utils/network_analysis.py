@@ -51,6 +51,41 @@ def emit_success(session_id, message, socketio):
         print(f"Success: {formatted_message}")
     except Exception as e:
         print(f"Error emitting success: {e}")
+def get_landfill_sites_from_db(engine, session_id=None, socketio=None):
+    """Fetch landfill sites from database"""
+    try:
+        emit_progress(session_id, "🔄 Fetching landfill sites from database...", socketio)
+        
+        query = """
+        SELECT 
+            landfill_id,
+            suitability_score,
+            suitability_class,
+            ST_AsText(geom) as geometry
+        FROM landfill_sites;
+        """
+        
+        # Read from database
+        df = pd.read_sql_query(query, engine)
+        
+        if df.empty:
+            emit_error(session_id, "No landfill sites found in database", socketio)
+            return None
+            
+        # Convert WKT to geometry
+        df['geometry'] = df['geometry'].apply(lambda x: wkt.loads(x))
+        
+        # Add name column
+        df['name'] = df.apply(lambda x: f'Landfill Site {x.landfill_id} ({x.suitability_class})', axis=1)
+        
+        # Create GeoDataFrame
+        gdf = gpd.GeoDataFrame(df, geometry='geometry', crs='EPSG:21037')
+        
+        emit_success(session_id, f"Successfully fetched {len(gdf)} landfill sites!", socketio)
+        return gdf
+        
+    except Exception as e:
+        emit_error(session_id, f"Error fetching landfill sites: {str(e)}", socketio)
         
 def get_collection_points_from_db(engine, session_id=None, socketio=None):
     """Fetch collection points from database"""
@@ -220,6 +255,7 @@ def get_road_network_from_db(engine, bounds, session_id=None, socketio=None):
         emit_error(session_id, f"Error creating road network: {str(e)} 😞", socketio)
         traceback.print_exc()
         return None
+    
 def calculate_collection_point_distances(routes_gdf, session_id=None, socketio=None):
     """
     Calculate and format distances from landfill sites to collection points
@@ -312,14 +348,16 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             except Exception as e:
                 emit_error(session_id, f"Failed to fetch from database: {str(e)}", socketio)
         
-        # Fall back to dummy data if database fetch failed
-        if collection_points_gdf is None:
+        # Get landfill sites from database
+        landfill_sites_gdf = None
+        if engine:
+            landfill_sites_gdf = get_landfill_sites_from_db(engine, session_id, socketio)
+        
+        # Fall back to dummy data if needed
+        if collection_points_gdf is None or landfill_sites_gdf is None:
             emit_progress(session_id, "Falling back to dummy data...", socketio)
             nyeri_gdf, collection_points_gdf, landfill_sites_gdf = create_dummy_data(session_id, socketio)
-        else:
-            # If we got collection points from DB, still need dummy landfill sites
-            _, _, landfill_sites_gdf = create_dummy_data(session_id, socketio)
-
+             
         # Ensure proper CRS
         if not nyeri_gdf.crs:
             nyeri_gdf.set_crs(epsg=4326, inplace=True)
@@ -367,27 +405,30 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         # Get nodes and edges
         nodes, edges = ox.graph_to_gdfs(G)
         
-        # Find nearest nodes
+        # Find nearest nodes for collection points
         collection_nodes = []
         for idx, point in collection_points_gdf.iterrows():
             nearest = ox.distance.nearest_nodes(G, point.geometry.x, point.geometry.y)
             collection_nodes.append(nearest)
             
+        # Find nearest nodes for landfill sites using centroids
         landfill_nodes = []
-        for idx, point in landfill_sites_gdf.iterrows():
-            nearest = ox.distance.nearest_nodes(G, point.geometry.x, point.geometry.y)
+        for idx, site in landfill_sites_gdf.iterrows():
+            centroid = site.geometry.centroid
+            nearest = ox.distance.nearest_nodes(G, centroid.x, centroid.y)
             landfill_nodes.append(nearest)
 
-         # Calculate routes
+        # Calculate routes
         routes_data = []
-        total_routes = len(landfill_nodes) * len(collection_nodes)  # Changed order to landfill first
+        total_routes = len(landfill_nodes) * len(collection_nodes)
         completed_routes = 0
         
-        for lf_idx, lf_node in enumerate(landfill_nodes):  # Start with landfill nodes
-            for cp_idx, cp_node in enumerate(collection_nodes):  # Then collection points
+        for lf_idx, lf_node in enumerate(landfill_nodes):
+            landfill_id = landfill_sites_gdf.iloc[lf_idx]['landfill_id']
+            for cp_idx, cp_node in enumerate(collection_nodes):
                 try:
-                    route = nx.shortest_path(G, lf_node, cp_node, weight='length')  # From landfill to collection point
-                    if len(route) < 2:  # Check if route has at least 2 points
+                    route = nx.shortest_path(G, lf_node, cp_node, weight='length')
+                    if len(route) < 2:
                         continue
                         
                     length = nx.shortest_path_length(G, lf_node, cp_node, weight='length')
@@ -397,14 +438,13 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                     for node in route:
                         x = G.nodes[node]['x']
                         y = G.nodes[node]['y']
-                        if (x, y) not in route_coords:  # Avoid duplicate coordinates
+                        if (x, y) not in route_coords:
                             route_coords.append((x, y))
                     
-                    # Only create LineString if we have at least 2 unique coordinates
                     if len(route_coords) >= 2:
                         routes_data.append({
-                            'landfill_id': lf_idx + 1,  # Changed order to match FROM-TO
-                            'collection_point_id': cp_idx + 1,
+                            'landfill_id': landfill_id,
+                            'collection_point_id': collection_points_gdf.iloc[cp_idx]['point_id'],
                             'distance_meters': length,
                             'geometry': LineString(route_coords)
                         })
@@ -415,20 +455,17 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                         emit_progress(session_id, f"📈 Route calculation progress: {progress:.1f}% 🔄", socketio)
                         
                 except nx.NetworkXNoPath:
-                    emit_error(session_id, f"No route found between LF {lf_idx + 1} and CP {cp_idx + 1} 🚫", socketio)
+                    emit_error(session_id, f"No route found between LF {landfill_id} and CP {collection_points_gdf.iloc[cp_idx]['point_id']} 🚫", socketio)
                 except Exception as e:
-                    emit_error(session_id, f"Error calculating route LF {lf_idx + 1} to CP {cp_idx + 1}: {str(e)} 🚫", socketio)
+                    emit_error(session_id, f"Error calculating route LF {landfill_id} to CP {collection_points_gdf.iloc[cp_idx]['point_id']}: {str(e)} 🚫", socketio)
                     continue
         
-        # Create routes GeoDataFrame only if we have valid routes
+        # Create routes GeoDataFrame
         if routes_data:
             routes_gdf = gpd.GeoDataFrame(routes_data, crs='EPSG:21037')
         else:
             emit_error(session_id, "No valid routes were created", socketio)
             return None
-        
-        # Create routes GeoDataFrame
-        routes_gdf = gpd.GeoDataFrame(routes_data, crs='EPSG:21037')
         
         emit_progress(session_id, "📊 Calculating collection point distances...", socketio)
         routes_summary, summary_stats = calculate_collection_point_distances(routes_gdf, session_id, socketio)
@@ -463,7 +500,7 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             zoom_start=12
         )
 
-        # Add routes to map with enhanced popups
+        # Add routes to map
         for idx, route in routes_gdf_wgs84.iterrows():
             coords = [(y, x) for x, y in route.geometry.coords]
             distance_km = route['distance_meters'] / 1000
@@ -473,8 +510,8 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             <div style="font-family: Arial, sans-serif;">
                 <h4>Route Details</h4>
                 <ul style="padding-left: 20px;">
-                    <li>From: C{route['collection_point_id']}</li>
-                    <li>To: C{route['landfill_id']}</li>
+                    <li>From: Collection Point {route['collection_point_id']}</li>
+                    <li>To: Landfill {route['landfill_id']}</li>
                     <li>Distance: {distance_km:.2f} km</li>
                     <li>Est. Time: {time_minutes:.2f} min</li>
                 </ul>
@@ -489,11 +526,11 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                 popup=folium.Popup(popup_html, max_width=300)
             ).add_to(m)
 
-        # Add collection points with enhanced popups
+        # Add collection points
         for idx, point in collection_points_gdf_wgs84.iterrows():
             popup_html = f"""
             <div style="font-family: Arial, sans-serif;">
-                <h4>Collection Point {idx + 1}</h4>
+                <h4>Collection Point {point['point_id']}</h4>
                 <p>{point['description']}</p>
             </div>
             """
@@ -506,20 +543,25 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                 popup=folium.Popup(popup_html, max_width=200)
             ).add_to(m)
 
-        # Add landfill sites with enhanced popups
-        for idx, point in landfill_sites_gdf_wgs84.iterrows():
+        # Add landfill sites
+        for idx, site in landfill_sites_gdf_wgs84.iterrows():
             popup_html = f"""
             <div style="font-family: Arial, sans-serif;">
-                <h4>{point['name']}</h4>
-                <p>Capacity: {point['capacity']} tons</p>
+                <h4>{site['name']}</h4>
+                <p>Suitability Score: {site['suitability_score']:.2f}</p>
+                <p>Class: {site['suitability_class']}</p>
             </div>
             """
             
-            folium.CircleMarker(
-                location=[point.geometry.y, point.geometry.x],
-                radius=8,
-                color='green',
-                fill=True,
+            # Convert the polygon geometry to GeoJSON format
+            folium.GeoJson(
+                site.geometry.__geo_interface__,
+                style_function=lambda x: {
+                    'fillColor': 'green',
+                    'color': 'black',
+                    'weight': 2,
+                    'fillOpacity': 0.7
+                },
                 popup=folium.Popup(popup_html, max_width=200)
             ).add_to(m)
 
