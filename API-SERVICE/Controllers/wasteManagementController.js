@@ -52,6 +52,33 @@ const wasteManagementController = {
       });
     }
   },
+
+  async saveRoutes(req, res) {
+    try {
+      const { routes } = req.body;
+
+      if (!Array.isArray(routes)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Routes must be an array',
+        });
+      }
+
+      const result = await wasteManagementService.saveRoutes(routes);
+
+      res.json({
+        success: true,
+        message: `Successfully saved ${result.count} routes`,
+        data: result,
+      });
+    } catch (error) {
+      console.error('Error in saveRoutes controller:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to save routes',
+      });
+    }
+  },
 };
 
 module.exports = wasteManagementController;
