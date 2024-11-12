@@ -1,6 +1,5 @@
-// services/wasteManagementService.js
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const { Prisma } = require('@prisma/client');
+const prisma = require('../Lib/prisma.js');
 
 const wasteManagementService = {
   getSummaryStats: async () => {
@@ -126,6 +125,61 @@ const wasteManagementService = {
       });
     } catch (error) {
       console.error('Error fetching collection points:', error);
+      throw error;
+    }
+  },
+  async saveRoutes(routesData) {
+    try {
+      const savedRoutes = [];
+
+      for (const route of routesData) {
+        // Validate required fields
+        if (
+          !route.collection_point_id ||
+          !route.landfill_id ||
+          !route.distance_meters ||
+          !route.geometry
+        ) {
+          throw new Error('Missing required fields in route data');
+        }
+
+        // Convert geometry to PostGIS format
+        const geomSQL = Prisma.sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(
+          route.geometry
+        )}), 21037)`;
+
+        // Create the route record
+        const savedRoute = await prisma.$queryRaw`
+          INSERT INTO routes (
+            collection_point_id,
+            landfill_site_id,
+            distance_meters,
+            geom,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            ${parseInt(route.collection_point_id)},
+            ${parseInt(route.landfill_id)},
+            ${parseFloat(route.distance_meters)},
+            ${geomSQL},
+            NOW(),
+            NOW()
+          )
+          RETURNING id, collection_point_id, landfill_site_id, distance_meters;
+        `;
+
+        console.log('Route saved:', savedRoute);
+        savedRoutes.push(savedRoute[0]);
+      }
+
+      return {
+        success: true,
+        count: savedRoutes.length,
+        routes: savedRoutes,
+      };
+    } catch (error) {
+      console.error('Error saving routes:', error);
       throw error;
     }
   },
