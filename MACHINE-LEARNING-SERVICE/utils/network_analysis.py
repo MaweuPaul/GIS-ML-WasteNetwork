@@ -490,7 +490,7 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         
                 route_data = {
                     'collection_point_id': int(route['collection_point_id']),
-                    'landfill_id': actual_id,  # Use the actual database ID
+                    'landfill_id': actual_id,  
                     'distance_meters': float(route['distance_meters']),
                     'geometry': {
                         'type': 'LineString',
@@ -505,9 +505,6 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                 }
         
                 routes_for_db.append(route_data)
-        
-                if idx % 10 == 0:
-                    emit_progress(session_id, f"📍 Processed {idx + 1} routes out of {len(routes_gdf)}...", socketio)
         
             except Exception as e:
                 emit_error(session_id, f"❌ Error processing route {idx}: {str(e)}", socketio)
@@ -531,8 +528,7 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
             'routes': routes_for_db
         }
         
-        # Log sample route for debugging
-        emit_progress(session_id, f"Sample route data: {json.dumps(routes_for_db[0], indent=2)}", socketio)
+    
         emit_progress(session_id, f"Total routes to save: {len(routes_for_db)}", socketio)
         
         # Send to API with detailed error handling
@@ -546,10 +542,6 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
                 timeout=30
             )
             
-            # Log the complete response
-            emit_progress(session_id, f"Response status: {response.status_code}", socketio)
-            emit_progress(session_id, f"Response headers: {dict(response.headers)}", socketio)
-            emit_progress(session_id, f"Response body: {response.text}", socketio)
             
             if response.status_code == 200:
                 emit_success(session_id, f"✅ Successfully saved {len(routes_for_db)} routes!", socketio)
