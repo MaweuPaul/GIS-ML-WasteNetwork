@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 import json 
 from shapely import wkt
+import requests 
 
 # Load environment variables
 load_dotenv()
@@ -58,6 +59,7 @@ def get_landfill_sites_from_db(engine, session_id=None, socketio=None):
         
         query = """
         SELECT 
+          id,
             landfill_id,
             suitability_score,
             suitability_class,
@@ -470,7 +472,103 @@ def perform_network_analysis(nyeri_gdf, session_id=None, socketio=None, collecti
         if routes_summary.empty:
             emit_error(session_id, "Failed to calculate route summary", socketio)
             return None
+        routes_for_db = []
+ 
+        for idx, route in routes_gdf.iterrows():
+            try:
+                # Get the landfill details using the actual database ID
+                landfill = landfill_sites_gdf[landfill_sites_gdf['landfill_id'] == route['landfill_id']]
+                
+                if landfill.empty:
+                    emit_error(session_id, f"❌ Landfill not found for ID {route['landfill_id']}", socketio)
+                    continue
+                    
+                
+                actual_id = int(landfill.iloc[0]['id'])  
+                
+                emit_progress(session_id, f"Mapping landfill_id {route['landfill_id']} to actual ID {actual_id}", socketio)
         
+                route_data = {
+                    'collection_point_id': int(route['collection_point_id']),
+                    'landfill_id': actual_id,  # Use the actual database ID
+                    'distance_meters': float(route['distance_meters']),
+                    'geometry': {
+                        'type': 'LineString',
+                        'coordinates': [[float(x), float(y)] for x, y in route.geometry.coords],
+                        'crs': {
+                            'type': 'name',
+                            'properties': {
+                                'name': 'EPSG:21037'
+                            }
+                        }
+                    }
+                }
+        
+                routes_for_db.append(route_data)
+        
+                if idx % 10 == 0:
+                    emit_progress(session_id, f"📍 Processed {idx + 1} routes out of {len(routes_gdf)}...", socketio)
+        
+            except Exception as e:
+                emit_error(session_id, f"❌ Error processing route {idx}: {str(e)}", socketio)
+                continue
+        
+        # Verify the first few routes
+        emit_progress(session_id, "Routes verification:", socketio)
+        for i in range(min(3, len(routes_for_db))):
+            emit_progress(
+                session_id, 
+                f"Route {i + 1}: collection_point={routes_for_db[i]['collection_point_id']}, " +
+                f"landfill={routes_for_db[i]['landfill_id']} (should be 22, 23, or 24)", 
+                socketio
+            )
+        # Validate final payload
+        if not routes_for_db:
+            emit_error(session_id, "❌ No valid routes to save", socketio)
+            return
+        
+        payload = {
+            'routes': routes_for_db
+        }
+        
+        # Log sample route for debugging
+        emit_progress(session_id, f"Sample route data: {json.dumps(routes_for_db[0], indent=2)}", socketio)
+        emit_progress(session_id, f"Total routes to save: {len(routes_for_db)}", socketio)
+        
+        # Send to API with detailed error handling
+        try:
+            emit_progress(session_id, "💾 Saving routes to database...", socketio)
+            
+            response = requests.post(
+                'http://localhost:3000/api/waste-management/save-routes',
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+            
+            # Log the complete response
+            emit_progress(session_id, f"Response status: {response.status_code}", socketio)
+            emit_progress(session_id, f"Response headers: {dict(response.headers)}", socketio)
+            emit_progress(session_id, f"Response body: {response.text}", socketio)
+            
+            if response.status_code == 200:
+                emit_success(session_id, f"✅ Successfully saved {len(routes_for_db)} routes!", socketio)
+            else:
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get('error', 'Unknown error')
+                    emit_error(session_id, f"Failed to save routes: {error_message}", socketio)
+                except ValueError:
+                    emit_error(session_id, f"Failed to save routes: {response.text}", socketio)
+                
+        except requests.exceptions.ConnectionError:
+            emit_error(session_id, "❌ Could not connect to the API server", socketio)
+        except requests.exceptions.Timeout:
+            emit_error(session_id, "❌ Request timed out", socketio)
+        except requests.exceptions.RequestException as e:
+            emit_error(session_id, f"❌ Request error: {str(e)}", socketio)
+        except Exception as e:
+            emit_error(session_id, f"❌ Unexpected error: {str(e)}", socketio)
         # Save outputs
         file_paths = {}
         
