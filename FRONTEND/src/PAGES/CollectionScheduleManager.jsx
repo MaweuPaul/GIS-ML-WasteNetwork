@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+// CollectionScheduleManager.jsx
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MapContainer,
   TileLayer,
@@ -7,7 +8,6 @@ import {
   FeatureGroup,
   Popup,
   useMap,
-  Marker,
 } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import { toast } from 'react-hot-toast';
@@ -16,7 +16,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 
-// Fix for default marker icon issues in Leaflet with React
+// Fix for default marker icon issues
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -28,7 +28,6 @@ L.Icon.Default.mergeOptions({
 });
 
 const baseUrl = 'http://localhost:3000';
-
 const DAYS_OF_WEEK = [
   'Monday',
   'Tuesday',
@@ -45,53 +44,37 @@ const initialZoneForm = {
   collectionDays: [],
   time: '',
   coordinates: null,
-}; /// Helper function to convert GeoJSON coordinates [lng, lat] to Leaflet [lat, lng]
+};
+
+// Coordinate conversion utilities
 const convertGeoJSONToLeaflet = (geoJSON) => {
   try {
-    // If we receive a GeoJSON object, extract the coordinates
     const coordinates = geoJSON.coordinates?.[0] || geoJSON;
-
     if (!Array.isArray(coordinates)) {
       console.error('Invalid GeoJSON coordinates:', coordinates);
       return [];
     }
-
-    // Convert the coordinates
-    const leafletCoords = coordinates
-      .map((coord) => {
-        if (Array.isArray(coord) && coord.length === 2) {
-          // Swap [longitude, latitude] to [latitude, longitude]
-          return [coord[1], coord[0]];
-        }
-        console.error('Invalid coordinate pair:', coord);
-        return null;
-      })
+    return coordinates
+      .map((coord) =>
+        Array.isArray(coord) && coord.length === 2 ? [coord[1], coord[0]] : null
+      )
       .filter(Boolean);
-
-    return leafletCoords;
   } catch (error) {
     console.error('Error converting coordinates:', error);
     return [];
   }
 };
 
-// Helper function to convert Leaflet coordinates [lat, lng] to GeoJSON [lng, lat]
 const convertLeafletToGeoJSON = (leafletCoords) => {
   try {
     if (!Array.isArray(leafletCoords)) {
       console.error('Invalid Leaflet coordinates:', leafletCoords);
       return [];
     }
-
     return leafletCoords
-      .map((coord) => {
-        if (Array.isArray(coord) && coord.length === 2) {
-          // Swap [latitude, longitude] to [longitude, latitude]
-          return [coord[1], coord[0]];
-        }
-        console.error('Invalid coordinate pair:', coord);
-        return null;
-      })
+      .map((coord) =>
+        Array.isArray(coord) && coord.length === 2 ? [coord[1], coord[0]] : null
+      )
       .filter(Boolean);
   } catch (error) {
     console.error('Error converting coordinates:', error);
@@ -99,28 +82,24 @@ const convertLeafletToGeoJSON = (leafletCoords) => {
   }
 };
 
-// Map Editor Component for handling edit mode
+// MapEditor Component
 const MapEditor = ({ zone, onUpdate }) => {
   const map = useMap();
   const featureGroupRef = useRef(null);
 
   useEffect(() => {
     if (
-      zone &&
-      zone.coordinates &&
-      zone.coordinates.type === 'Polygon' &&
-      Array.isArray(zone.coordinates.coordinates)
+      zone?.coordinates?.type === 'Polygon' &&
+      Array.isArray(zone?.coordinates?.coordinates)
     ) {
       const leafletCoords = convertGeoJSONToLeaflet(
         zone.coordinates.coordinates[0]
       );
       if (leafletCoords.length > 0) {
         const layer = L.polygon(leafletCoords);
-        featureGroupRef.current.clearLayers();
-        featureGroupRef.current.addLayer(layer);
+        featureGroupRef.current?.clearLayers();
+        featureGroupRef.current?.addLayer(layer);
         map.fitBounds(layer.getBounds(), { padding: [50, 50] });
-      } else {
-        toast.error('Invalid zone coordinates. Cannot edit this zone.');
       }
     }
   }, [zone, map]);
@@ -140,23 +119,24 @@ const MapEditor = ({ zone, onUpdate }) => {
       <EditControl
         position="topright"
         onEdited={handleEdit}
-        edit={{
-          featureGroup: featureGroupRef.current,
-          edit: true,
-          remove: false,
-        }}
         draw={{
+          polygon: false,
           rectangle: false,
           circle: false,
           circlemarker: false,
           marker: false,
           polyline: false,
-          polygon: false,
+        }}
+        edit={{
+          edit: true,
+          remove: false,
+          featureGroup: featureGroupRef.current,
         }}
       />
     </FeatureGroup>
   );
 };
+// CollectionScheduleManager.jsx (continued)
 
 function CollectionScheduleManager() {
   const [zones, setZones] = useState([]);
@@ -203,14 +183,14 @@ function CollectionScheduleManager() {
       toast.error('Cannot fit map to invalid bounds.');
     }
   };
+
   const handleDrawCreate = (e) => {
     const layer = e.layer;
     setDrawnLayer(layer);
     const geoJSON = layer.toGeoJSON();
+
     if (
-      geoJSON &&
-      geoJSON.geometry &&
-      geoJSON.geometry.coordinates &&
+      geoJSON?.geometry?.coordinates &&
       Array.isArray(geoJSON.geometry.coordinates[0])
     ) {
       const leafletCoords = convertGeoJSONToLeaflet(
@@ -239,7 +219,6 @@ function CollectionScheduleManager() {
         return;
       }
 
-      // Convert Leaflet [lat, lng] to GeoJSON [lng, lat]
       const geoJSONCoordinates = [
         convertLeafletToGeoJSON(zoneForm.coordinates),
       ];
@@ -264,6 +243,7 @@ function CollectionScheduleManager() {
         await axios.post(`${baseUrl}/api/zones`, payload);
         toast.success('Zone created successfully');
       }
+
       fetchZones();
       resetForm();
     } catch (error) {
@@ -287,6 +267,7 @@ function CollectionScheduleManager() {
       }
     }
   };
+
   const handleZoneClick = (zone) => {
     try {
       setSelectedZone(zone);
@@ -341,8 +322,11 @@ function CollectionScheduleManager() {
       </div>
     );
   }
+  // CollectionScheduleManager.jsx (continued)
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Header Section */}
       <div className="mb-8 flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
@@ -401,6 +385,7 @@ function CollectionScheduleManager() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Sidebar */}
         <div className="space-y-6">
           {/* Zones List */}
           <div className="bg-white rounded-xl shadow-sm p-6">
@@ -502,8 +487,12 @@ function CollectionScheduleManager() {
                     </svg>
                   </button>
                 )}
-              </div>{' '}
+              </div>
+
               <form onSubmit={handleZoneSubmit} className="space-y-4">
+                {/* Form fields continue in Part 4... */}//
+                CollectionScheduleManager.jsx (continued)
+                {/* Form Fields */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Zone Name
@@ -518,7 +507,6 @@ function CollectionScheduleManager() {
                     required
                   />
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Areas
@@ -538,7 +526,6 @@ function CollectionScheduleManager() {
                     required
                   />
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Collection Days
@@ -568,7 +555,6 @@ function CollectionScheduleManager() {
                     Hold Ctrl/Cmd to select multiple days
                   </p>
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Collection Time
@@ -584,7 +570,6 @@ function CollectionScheduleManager() {
                     required
                   />
                 </div>
-
                 <div className="flex justify-end gap-2 mt-6">
                   <button
                     type="button"
@@ -690,6 +675,7 @@ function CollectionScheduleManager() {
                     }
                     return null;
                   })}
+
                   {editMode ? (
                     selectedZone && selectedZone.coordinates ? (
                       <MapEditor
@@ -704,11 +690,6 @@ function CollectionScheduleManager() {
                           position="topright"
                           onCreated={handleDrawCreate}
                           draw={{
-                            rectangle: false,
-                            circle: false,
-                            circlemarker: false,
-                            marker: false,
-                            polyline: false,
                             polygon: {
                               allowIntersection: false,
                               drawError: {
@@ -720,9 +701,14 @@ function CollectionScheduleManager() {
                                 color: '#2563EB',
                                 fillOpacity: 0.3,
                               },
-                            },
+                            },C
+                            rectangle: false,
+                            circle: false,
+                            circlemarker: false,
+                            marker: false,
+                            polyline: false,
                           }}
-                          edit={false}
+                          edit={null}
                         />
                       </FeatureGroup>
                     )
