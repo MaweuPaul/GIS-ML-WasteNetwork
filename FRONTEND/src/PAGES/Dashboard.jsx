@@ -1,26 +1,83 @@
 import React, { useEffect, useState } from 'react';
 import {
   FaTrash,
+  FaMapMarkerAlt,
   FaRoute,
-  FaCalendarAlt,
-  FaExclamationTriangle,
-  FaChartBar,
-  FaMapMarkedAlt,
   FaTruck,
+  FaMapMarkedAlt,
   FaClipboardList,
+  FaChartLine,
+  FaCalendarAlt,
 } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { motion } from 'framer-motion';
 
 const API_URL = 'http://localhost:3000';
+
+// Stat Card Component
+const StatCard = ({ title, value, icon, description }) => (
+  <motion.div
+    whileHover={{ y: -5 }}
+    className="p-6 rounded-lg bg-gray-50 border border-gray-200 transition-all duration-300"
+  >
+    <div className="flex items-center justify-between mb-2">
+      <div className="p-2 rounded-full bg-white shadow-sm">{icon}</div>
+      <span className="text-lg font-semibold text-gray-700">{value}</span>
+    </div>
+    <h3 className="text-gray-800 text-lg font-bold mb-1">{title}</h3>
+    <p className="text-gray-600 text-sm">{description}</p>
+  </motion.div>
+);
+
+// Quick Action Card Component
+const QuickActionCard = ({ title, description, icon, onClick, bgColor }) => (
+  <motion.div
+    whileHover={{ scale: 1.02 }}
+    whileTap={{ scale: 0.98 }}
+    onClick={onClick}
+    className={`${bgColor} p-6 rounded-xl border border-gray-200 
+                transition-all duration-300 cursor-pointer flex items-center space-x-4`}
+  >
+    <div className="p-3 rounded-full bg-white shadow-sm text-2xl">{icon}</div>
+    <div>
+      <h3 className="font-bold text-gray-800 text-lg">{title}</h3>
+      <p className="text-gray-600">{description}</p>
+    </div>
+  </motion.div>
+);
+
+// Loading Spinner Component
+const LoadingSpinner = () => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    className="flex items-center justify-center min-h-screen bg-gray-50"
+  >
+    <div className="text-center">
+      <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+      <p className="mt-4 text-gray-600 font-medium">
+        Loading your dashboard...
+      </p>
+    </div>
+  </motion.div>
+);
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [timeOfDay, setTimeOfDay] = useState('');
 
   useEffect(() => {
+    // Set time of day greeting
+    const hour = new Date().getHours();
+    if (hour < 12) setTimeOfDay('morning');
+    else if (hour < 17) setTimeOfDay('afternoon');
+    else setTimeOfDay('evening');
+
+    // Fetch dashboard data
     const fetchSummaryData = async () => {
       try {
         const response = await axios.get(
@@ -41,67 +98,62 @@ const Dashboard = () => {
   const cards = [
     {
       title: 'Landfill Sites',
-      icon: <FaTrash className="text-blue-500" />,
-      value: summaryData ? `${summaryData.landfillCount} Sites` : 'Loading...',
+      icon: <FaTrash className="text-blue-600 text-2xl" />,
+      value: summaryData ? `${summaryData.landfillCount} Sites` : '...',
       description: 'View and manage landfill sites',
-      path: '/results',
-      color: 'bg-blue-100',
+      path: '/landfills',
+      color: 'bg-blue-50',
+      borderColor: 'border-blue-200',
     },
     {
       title: 'Collection Points',
-      icon: <FaRoute className="text-green-500" />,
-      value: summaryData
-        ? `${summaryData.collectionPointCount} Points`
-        : 'Loading...',
-      description: 'View collection points',
-      path: '/collection-schedule',
-      color: 'bg-green-100',
+      icon: <FaMapMarkerAlt className="text-green-600 text-2xl" />,
+      value: summaryData ? `${summaryData.collectionPointCount} Points` : '...',
+      description: 'Monitor collection points',
+      path: '/collection-points',
+      color: 'bg-green-50',
+      borderColor: 'border-green-200',
     },
     {
       title: 'Active Routes',
-      icon: <FaExclamationTriangle className="text-red-500" />,
-      value: summaryData ? `${summaryData.routeCount} Routes` : 'Loading...',
-      description: 'View active routes',
-      path: '/incidents',
-      color: 'bg-red-100',
+      icon: <FaRoute className="text-red-600 text-2xl" />,
+      value: summaryData ? `${summaryData.routeCount} Routes` : '...',
+      description: 'Track active routes',
+      path: '/routes',
+      color: 'bg-red-50',
+      borderColor: 'border-red-200',
     },
     {
       title: 'Average Distance',
-      icon: <FaTruck className="text-purple-500" />,
+      icon: <FaTruck className="text-purple-600 text-2xl" />,
       value: summaryData
-        ? `${(summaryData.routeStats.averageDistance / 1000).toFixed(2)} km`
-        : 'Loading...',
-      description: 'Average route distance',
-      path: '/special-pickup',
-      color: 'bg-purple-100',
+        ? `${(summaryData.routeStats?.averageDistance / 1000).toFixed(2)} km`
+        : '...',
+      description: 'Route statistics',
+      path: '/statistics',
+      color: 'bg-purple-50',
+      borderColor: 'border-purple-200',
     },
   ];
 
   const quickActions = [
     {
       title: 'Upload Data',
-      icon: <FaMapMarkedAlt className="text-indigo-500" />,
+      icon: <FaMapMarkedAlt className="text-indigo-600" />,
       description: 'Upload new geographical data',
       path: '/upload',
+      bgColor: 'bg-indigo-50',
     },
     {
       title: 'View Reports',
-      icon: <FaClipboardList className="text-orange-500" />,
+      icon: <FaClipboardList className="text-orange-600" />,
       description: 'Access analytics and reports',
       path: '/reports',
+      bgColor: 'bg-orange-50',
     },
   ];
 
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading dashboard data...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingSpinner />;
 
   if (error) {
     return (
@@ -109,7 +161,7 @@ const Dashboard = () => {
         <div className="text-red-500 mb-4">Error: {error}</div>
         <button
           onClick={() => window.location.reload()}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors"
         >
           Retry
         </button>
@@ -118,85 +170,100 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
-        <p className="text-gray-600 mt-2">
-          Welcome to the Waste Management System
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="p-8 max-w-7xl mx-auto"
+    >
+      {/* Header Section */}
+      <div className="mb-10">
+        <motion.h1
+          initial={{ x: -20 }}
+          animate={{ x: 0 }}
+          className="text-4xl font-bold text-gray-800"
+        >
+          Good {timeOfDay}! 👋
+        </motion.h1>
+        <p className="text-gray-600 mt-2 text-lg">
+          Welcome to your Waste Management Dashboard
         </p>
       </div>
 
-      {/* Main Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {/* Main Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
         {cards.map((card, index) => (
-          <div
+          <motion.div
             key={index}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.1 }}
+            className={`${card.color} p-6 rounded-xl border ${card.borderColor} 
+                       transition-all duration-300 cursor-pointer
+                       transform hover:scale-105 hover:shadow-lg`}
             onClick={() => navigate(card.path)}
-            className={`${card.color} p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer`}
           >
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-2xl">{card.icon}</div>
-              <span className="text-sm font-semibold text-gray-600">
-                {card.value}
-              </span>
-            </div>
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">
-              {card.title}
-            </h3>
-            <p className="text-sm text-gray-600">{card.description}</p>
-          </div>
+            <StatCard
+              title={card.title}
+              value={card.value}
+              icon={card.icon}
+              description={card.description}
+            />
+          </motion.div>
         ))}
       </div>
 
-      {/* Quick Actions */}
-      <div className="mb-8">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">
-          Quick Actions
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Quick Actions Section */}
+      <div className="mb-10">
+        <h2 className="text-2xl font-bold text-gray-800 mb-6">Quick Actions</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {quickActions.map((action, index) => (
-            <div
+            <QuickActionCard
               key={index}
+              title={action.title}
+              description={action.description}
+              icon={action.icon}
               onClick={() => navigate(action.path)}
-              className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer flex items-center space-x-4"
-            >
-              <div className="text-2xl">{action.icon}</div>
-              <div>
-                <h3 className="font-semibold text-gray-800">{action.title}</h3>
-                <p className="text-sm text-gray-600">{action.description}</p>
-              </div>
-            </div>
+              bgColor={action.bgColor}
+            />
           ))}
         </div>
       </div>
 
-      {/* Summary Section */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">
+      {/* Route Statistics Section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-xl shadow-sm p-8 border border-gray-200"
+      >
+        <h2 className="text-2xl font-bold text-gray-800 mb-6">
           Route Statistics
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="border-r border-gray-200 pr-4">
-            <h3 className="text-sm font-medium text-gray-600">Min Distance</h3>
-            <p className="text-2xl font-semibold text-gray-800">
-              {(summaryData.routeStats.minDistance / 1000).toFixed(2)} km
-            </p>
-          </div>
-          <div className="border-r border-gray-200 px-4">
-            <h3 className="text-sm font-medium text-gray-600">Max Distance</h3>
-            <p className="text-2xl font-semibold text-gray-800">
-              {(summaryData.routeStats.maxDistance / 1000).toFixed(2)} km
-            </p>
-          </div>
-          <div className="pl-4">
-            <h3 className="text-sm font-medium text-gray-600">Total Routes</h3>
-            <p className="text-2xl font-semibold text-gray-800">
-              {summaryData.routeCount}
-            </p>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <StatCard
+            title="Min Distance"
+            value={`${(summaryData.routeStats?.minDistance / 1000).toFixed(
+              2
+            )} km`}
+            icon={<FaChartLine className="text-green-500" />}
+            description="Shortest route distance"
+          />
+          <StatCard
+            title="Max Distance"
+            value={`${(summaryData.routeStats?.maxDistance / 1000).toFixed(
+              2
+            )} km`}
+            icon={<FaChartLine className="text-red-500" />}
+            description="Longest route distance"
+          />
+          <StatCard
+            title="Total Routes"
+            value={summaryData.routeCount}
+            icon={<FaCalendarAlt className="text-blue-500" />}
+            description="Active routes today"
+          />
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };
 
