@@ -35,13 +35,13 @@ const Navbar = ({ activePage, setActivePage }) => {
       icon: '📆',
       group: 'management',
     },
-    {
-      id: 'reports',
-      label: 'Reports',
-      path: '/reports',
-      icon: '📋',
-      group: 'management',
-    },
+    // {
+    //   id: 'reports',
+    //   label: 'Reports',
+    //   path: '/reports',
+    //   icon: '📋',
+    //   group: 'management',
+    // },
   ];
 
   const handleNavigation = (item) => {
