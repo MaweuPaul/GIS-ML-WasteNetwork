@@ -1,5 +1,5 @@
 const express = require('express');
-const riverController = require('../controllers/riverControllers');
+const riverController = require('../Controllers/riverControllers');
 
 const router = express.Router();
 
