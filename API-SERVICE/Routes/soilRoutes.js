@@ -6,7 +6,7 @@ const {
   deleteSoil,
   createSoils,
   deleteAllSoils,
-} = require('../controllers/soilContoller');
+} = require('../Controllers/soilController');
 
 const router = express.Router();
 
