@@ -6,7 +6,7 @@ const {
   updateAreaOfInterest,
   deleteAreaOfInterest,
   deleteAllAreasOfInterest,
-} = require('../Controllers/aoiController');
+} = require('../Controllers/aoicontroller');
 
 const router = express.Router();
 
