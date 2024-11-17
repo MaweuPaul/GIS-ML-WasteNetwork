@@ -7,7 +7,7 @@ const {
   updateProtectedArea,
   deleteProtectedArea,
   deleteAllProtectedAreas,
-} = require('../controllers/protectedAreasController');
+} = require('../Controllers/protectedAreasController');
 
 const router = express.Router();
 const upload = multer({ dest: 'uploads/' });
