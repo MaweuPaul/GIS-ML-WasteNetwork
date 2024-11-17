@@ -701,7 +701,7 @@ function CollectionScheduleManager() {
                                 color: '#2563EB',
                                 fillOpacity: 0.3,
                               },
-                            },C
+                            },
                             rectangle: false,
                             circle: false,
                             circlemarker: false,
