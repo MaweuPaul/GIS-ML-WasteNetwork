@@ -11,18 +11,48 @@ import matplotlib.patheffects as pe
 import datetime
 import eventlet
 import joblib
-from scipy.ndimage import gaussian_filter
-
-from sqlalchemy import Column, Integer, Float, String, DateTime, func
+from sqlalchemy import Column, Integer, Float, String, DateTime, ForeignKey, create_engine
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, Session
 from geoalchemy2 import Geometry
-from sqlalchemy.orm import Session
-from sqlalchemy import create_engine
 from geoalchemy2.shape import from_shape
+from shapely.geometry import Point
 from shapely.ops import unary_union
+from sqlalchemy import func
+
+
+Base = declarative_base()
+from sqlalchemy import Column, Integer, Float, String, DateTime, ForeignKey, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, Session
+from geoalchemy2 import Geometry
+from geoalchemy2.shape import from_shape
+from shapely.geometry import Point
 
 Base = declarative_base()
 
+class CollectionPoint(Base):
+    __tablename__ = 'collection_points'
+
+    id = Column(Integer, primary_key=True)
+
+    # Define relationship
+    routes = relationship("Route", back_populates="collection_point")
+
+class Route(Base):
+    __tablename__ = 'routes'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    collection_point_id = Column(Integer, ForeignKey('collection_points.id'), nullable=False)
+    landfill_site_id = Column(Integer, ForeignKey('landfill_sites.id'), nullable=False)
+    distance_meters = Column(Float, nullable=False)
+    geom = Column(Geometry(geometry_type='LINESTRING', srid=21037), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # Use string reference for relationship
+    collection_point = relationship("CollectionPoint", back_populates="routes")
+    landfill_site = relationship("LandfillSite", back_populates="routes")
 
 class LandfillSite(Base):
     __tablename__ = 'landfill_sites'
@@ -31,11 +61,12 @@ class LandfillSite(Base):
     landfill_id = Column(Integer, unique=True, nullable=False)
     suitability_score = Column(Float, nullable=False)
     suitability_class = Column(String, nullable=False)
-    # Changed to accept any geometry type
     geom = Column(Geometry(geometry_type='GEOMETRY', srid=21037), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    
+
+    # Define relationship
+    routes = relationship("Route", back_populates="landfill_site")
 def emit_progress(session_id, message, socketio):
     try:
         if socketio:
@@ -57,11 +88,8 @@ def emit_error(session_id, message, socketio):
             print("Error message:", message)
     except Exception as e:
         print(f"Failed to emit error message: {e}")
-        
+
 def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, socketio=None):
-    """
-    Delete existing sites and save new landfill sites to the database
-    """
     try:
         emit_progress(session_id, "\n🔄 Starting database export process...", socketio)
         emit_progress(session_id, f"📊 Total sites to process: {len(continuous_sites_gdf)}", socketio)
@@ -71,8 +99,15 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
         sites_created = 0
         
         try:
-            # First, delete all existing records
             emit_progress(session_id, "\n🗑️ Deleting existing records...", socketio)
+            
+            # Correct the class name from Routes to Route
+            session.query(Route).filter(Route.landfill_site_id.in_(
+                session.query(LandfillSite.id)
+            )).delete(synchronize_session=False)
+            session.commit()
+            
+            # Now delete records in the landfill_sites table
             deleted_count = session.query(LandfillSite).delete()
             session.commit()
             emit_progress(session_id, f"  ✅ Deleted {deleted_count} existing records", socketio)
@@ -82,7 +117,6 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
             
             for idx, row in continuous_sites_gdf.iterrows():
                 try:
-                    # Create new site
                     site = LandfillSite(
                         landfill_id=int(row['site_id']),
                         suitability_score=float(row['Total_Suit']),
@@ -93,10 +127,7 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
                     )
                     session.add(site)
                     sites_created += 1
-                    
-                    # Commit each site individually
                     session.commit()
-                    
                     sites_exported += 1
                     emit_progress(
                         session_id,
@@ -104,7 +135,6 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
                         f"(Score: {row['Total_Suit']:.2f}, Class: {row['Suitability_Class']})",
                         socketio
                     )
-                    
                 except Exception as e:
                     session.rollback()
                     emit_error(
@@ -114,7 +144,6 @@ def save_continuous_sites_to_db(continuous_sites_gdf, engine, session_id=None, s
                     )
                     continue
             
-            # Final summary
             emit_progress(session_id, "\n📊 Export Summary:", socketio)
             emit_progress(session_id, f"  • Previous records deleted: {deleted_count}", socketio)
             emit_progress(session_id, f"  • New sites created: {sites_created}", socketio)
@@ -145,37 +174,24 @@ def classify_suitability(score):
         return 'Suitable'
     else:
         return 'Highly Suitable'
-    
+
 def save_continuous_sites(continuous_sites_gdf, output_dir, session_id, socketio=None):
-    """
-    Save continuous candidate sites in multiple formats for network analysis
-    """
     try:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Ensure the GeoDataFrame has all necessary columns
         export_gdf = continuous_sites_gdf.copy()
-        
-        # Add area in hectares for easier reference
         export_gdf['area_ha'] = export_gdf['area_m2'] / 10000
-        
-        # Round numeric columns to 2 decimal places
         numeric_columns = ['Total_Suit', 'area_ha']
         for col in numeric_columns:
             if col in export_gdf.columns:
                 export_gdf[col] = export_gdf[col].round(2)
         
-        # Save as GeoJSON (good for web applications)
         geojson_path = os.path.join(output_dir, f'continuous_sites_{session_id}.geojson')
         export_gdf.to_file(geojson_path, driver='GeoJSON')
         
-        # Save as Shapefile (good for desktop GIS)
         shp_path = os.path.join(output_dir, f'continuous_sites_{session_id}.shp')
         export_gdf.to_file(shp_path)
         
-        # Save as CSV with coordinates (for simple table access)
         csv_path = os.path.join(output_dir, f'continuous_sites_{session_id}.csv')
-        # Add centroid coordinates to CSV
         export_gdf['centroid_lon'] = export_gdf.geometry.centroid.x
         export_gdf['centroid_lat'] = export_gdf.geometry.centroid.y
         export_gdf.drop(columns=['geometry']).to_csv(csv_path, index=False)
@@ -198,13 +214,8 @@ def save_continuous_sites(continuous_sites_gdf, output_dir, session_id, socketio
         return None
 
 def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None):
-    """
-    Save identified landfill locations in formats suitable for network analysis
-    """
     try:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Create a new GeoDataFrame with only the necessary information
         landfill_locations = gpd.GeoDataFrame({
             'landfill_id': range(1, len(candidate_gdf) + 1),
             'suitability_score': candidate_gdf['Total_Suit'],
@@ -212,16 +223,13 @@ def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None
             'geometry': candidate_gdf.geometry
         }, crs=candidate_gdf.crs)
         
-        # Add coordinates as separate columns
         landfill_locations['longitude'] = landfill_locations.geometry.centroid.x
         landfill_locations['latitude'] = landfill_locations.geometry.centroid.y
         
-        # Create file paths
         geojson_path = os.path.join(output_dir, f'landfill_locations_{session_id}.geojson')
         shp_path = os.path.join(output_dir, f'landfill_locations_{session_id}.shp')
         csv_path = os.path.join(output_dir, f'landfill_locations_{session_id}.csv')
         
-        # Save in different formats
         landfill_locations.to_file(geojson_path, driver='GeoJSON')
         landfill_locations.to_file(shp_path)
         landfill_locations.drop(columns=['geometry']).to_csv(csv_path, index=False)
@@ -243,53 +251,34 @@ def save_landfill_locations(candidate_gdf, output_dir, session_id, socketio=None
         emit_error(session_id, f"Error saving landfill locations: {str(e)}", socketio)
         return None
 
-
-
 def clean_data(points_gdf):
-    """Clean the input data with appropriate interpolation and handling of no-data values"""
-    
-    # Create a copy to avoid modifying the original dataframe
     points_gdf = points_gdf.copy()
-    
-    # First check if all required columns exist, if not create them
-    required_columns = ['River_b', 'Road_b', 'Protect', 'Settlem', 
-                       'Slope', 'Land_U', 'Soil']
+    required_columns = ['River_b', 'Road_b', 'Protect', 'Settlem', 'Slope', 'Land_U', 'Soil']
     
     for col in required_columns:
         if col not in points_gdf.columns:
             points_gdf[col] = np.nan
     
-    # Convert columns to numeric, keeping NaN values
     for col in required_columns:
         points_gdf[col] = pd.to_numeric(points_gdf[col], errors='coerce')
     
-    # Handle Land_U specifically - replace NaN with 0 (no data)
     if 'Land_U' in points_gdf.columns:
         points_gdf['Land_U'] = points_gdf['Land_U'].fillna(0)
     else:
         points_gdf['Land_U'] = 0
     
-    # For other columns, use interpolation based on nearest neighbors
-    columns_to_interpolate = ['River_b', 'Road_b', 'Protect', 'Settlem', 
-                            'Slope', 'Soil']
+    columns_to_interpolate = ['River_b', 'Road_b', 'Protect', 'Settlem', 'Slope', 'Soil']
     
     for col in columns_to_interpolate:
         if col in points_gdf.columns:
-            # Calculate column mean for non-null values
             col_mean = points_gdf[col].mean()
-            if pd.isna(col_mean):  # If all values are NaN
-                col_mean = 3  # Default middle value
+            if pd.isna(col_mean):
+                col_mean = 3
             
-            # First try to interpolate based on nearby values
             points_gdf[col] = points_gdf[col].interpolate(method='nearest', limit_direction='both')
-            
-            # If any NaN values remain after interpolation, fill with column mean
             points_gdf[col] = points_gdf[col].fillna(col_mean)
-            
-            # Round the interpolated values to maintain the same scale as original data
             points_gdf[col] = points_gdf[col].round(0)
             
-            # Ensure values stay within valid ranges
             if col == 'Protect':
                 points_gdf[col] = points_gdf[col].clip(1, 5)
             elif col in ['River_b', 'Road_b', 'Settlem', 'Soil']:
@@ -298,22 +287,19 @@ def clean_data(points_gdf):
                 points_gdf[col] = points_gdf[col].clip(0, 4)
     
     return points_gdf
+
 def create_suitability_map(gdf, nyeri_gdf, title, output_path):
-    """Create and save a suitability map with 5 classes"""
     color_dict = {
-        'Not Suitable': '#d7191c',      # Dark red
-        'Less Suitable': '#fdae61',     # Orange
-        'Moderately Suitable': '#ffffbf',# Light yellow
-        'Suitable': '#a6d96a',          # Light green
-        'Highly Suitable': '#1a9641'    # Dark green
+        'Not Suitable': '#d7191c',
+        'Less Suitable': '#fdae61',
+        'Moderately Suitable': '#ffffbf',
+        'Suitable': '#a6d96a',
+        'Highly Suitable': '#1a9641'
     }
     
     fig, ax = plt.subplots(figsize=(15, 10))
-    
-    # Plot base map
     nyeri_gdf.plot(ax=ax, alpha=0.3, color='lightgray')
     
-    # Plot suitability classes
     for suitability_class, color in color_dict.items():
         mask = gdf['Suitability_Class'] == suitability_class
         class_gdf = gdf[mask]
@@ -325,7 +311,6 @@ def create_suitability_map(gdf, nyeri_gdf, title, output_path):
                 alpha=0.7
             )
     
-    # Customize the legend
     handles, labels = ax.get_legend_handles_labels()
     legend = ax.legend(
         handles, 
@@ -340,22 +325,17 @@ def create_suitability_map(gdf, nyeri_gdf, title, output_path):
     )
     
     ax.set_title(title, fontsize=16, pad=20)
-    
-    # Add north arrow
     ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction',
                horizontalalignment='center', verticalalignment='center',
                fontsize=18, fontweight='bold',
                path_effects=[pe.withStroke(linewidth=3, foreground="w")])
     
-    # Add scale bar
     scalebar = ScaleBar(1, 'km', dimension='si-length', location='lower right')
     ax.add_artist(scalebar)
     
-    # Remove axes
     ax.set_xticks([])
     ax.set_yticks([])
     
-    # Adjust layout and save
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -363,21 +343,16 @@ def create_suitability_map(gdf, nyeri_gdf, title, output_path):
     return output_path
 
 def create_candidate_map(gdf, nyeri_gdf, title, output_path):
-    """Create and save a candidate sites map"""
     fig, ax = plt.subplots(figsize=(15, 10))
-    
-    # Plot base map
     nyeri_gdf.plot(ax=ax, alpha=0.3, color='lightgray')
     
-    # Plot suitable areas
     gdf.plot(
         ax=ax,
-        color='#90EE90',  # Light green
+        color='#90EE90',
         label='Suitable',
         alpha=0.7
     )
     
-    # Customize the legend
     handles, labels = ax.get_legend_handles_labels()
     legend = ax.legend(
         handles, 
@@ -392,45 +367,33 @@ def create_candidate_map(gdf, nyeri_gdf, title, output_path):
     )
     
     ax.set_title(title, fontsize=16, pad=20)
-    
-    # Add north arrow
     ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction',
                horizontalalignment='center', verticalalignment='center',
                fontsize=18, fontweight='bold',
                path_effects=[pe.withStroke(linewidth=3, foreground="w")])
     
-    # Add scale bar
     scalebar = ScaleBar(1, 'km', dimension='si-length', location='lower right')
     ax.add_artist(scalebar)
     
-    # Remove axes
     ax.set_xticks([])
     ax.set_yticks([])
     
-    # Adjust layout and save
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     
     return output_path
+
 def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_area=10000, socketio=None, session_id=None):
-    """
-    Create continuous areas from candidate sites by buffering and dissolving
-    """
     try:
         emit_progress(session_id, "Creating continuous candidate areas...", socketio)
         
-        # Create buffer around points with a larger initial buffer
         buffered = candidate_gdf.copy()
         buffered.geometry = buffered.geometry.buffer(buffer_distance)
         
-        # Create clusters of points that are close together
         buffered['cluster_id'] = 1
-        
-        # Calculate mean suitability score for each point
         buffered['mean_suit'] = buffered['Total_Suit']
         
-        # Dissolve overlapping buffers while maintaining mean suitability
         dissolved = buffered.dissolve(
             by='cluster_id',
             aggfunc={
@@ -439,23 +402,16 @@ def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_are
             }
         ).reset_index()
         
-        # Explode multi-polygons into single polygons
         continuous_sites = dissolved.explode(index_parts=True).reset_index(drop=True)
-        
-        # Calculate area and filter by minimum size
         continuous_sites['area_m2'] = continuous_sites.geometry.area
         continuous_sites = continuous_sites[continuous_sites['area_m2'] >= min_area]
         
-        # Smooth the polygons
         continuous_sites.geometry = continuous_sites.geometry.buffer(0)
         
         if len(continuous_sites) > 0:
-            # Add site IDs and calculate centroids
             continuous_sites['site_id'] = range(1, len(continuous_sites) + 1)
             continuous_sites['centroid_x'] = continuous_sites.geometry.centroid.x
             continuous_sites['centroid_y'] = continuous_sites.geometry.centroid.y
-            
-            # Add suitability class based on mean Total_Suit
             continuous_sites['Suitability_Class'] = continuous_sites['Total_Suit'].apply(classify_suitability)
             
             emit_progress(session_id, f"Created {len(continuous_sites)} continuous sites", socketio)
@@ -470,21 +426,16 @@ def create_continuous_candidate_sites(candidate_gdf, buffer_distance=50, min_are
         return None
 
 def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, output_path):
-    """Create and save a map of continuous candidate sites without labels"""
     fig, ax = plt.subplots(figsize=(15, 10))
-    
-    # Plot base map
     nyeri_gdf.plot(ax=ax, alpha=0.3, color='lightgray')
     
-    # Plot continuous suitable areas
     continuous_sites_gdf.plot(
         ax=ax,
-        color='#90EE90',  # Light green
+        color='#90EE90',
         alpha=0.7,
         label='Suitable Areas'
     )
     
-    # Customize the legend
     ax.legend(
         title='Candidate Sites',
         title_fontsize=12,
@@ -496,29 +447,24 @@ def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, outp
     )
     
     ax.set_title(title, fontsize=16, pad=20)
-    
-    # Add north arrow
     ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction',
                horizontalalignment='center', verticalalignment='center',
                fontsize=18, fontweight='bold',
                path_effects=[pe.withStroke(linewidth=3, foreground="w")])
     
-    # Add scale bar
     scalebar = ScaleBar(1, 'km', dimension='si-length', location='lower right')
     ax.add_artist(scalebar)
     
-    # Remove axes
     ax.set_xticks([])
     ax.set_yticks([])
     
-    # Adjust layout and save
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     
     return output_path
 
-def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=50, session_id=None, socketio=None,engine=None):
+def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=50, session_id=None, socketio=None, engine=None):
     try:
         stats = {
             'full_map': {},
@@ -528,11 +474,9 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                
         emit_progress(session_id, "🚀 Starting suitability prediction...", socketio)
         
-        # Load model and scaler
         model = joblib.load(model_path)
         scaler = joblib.load(scaler_path)
         
-        # Define grid points
         bounds = nyeri_gdf.total_bounds
         x_coords = np.arange(bounds[0], bounds[2], interval)
         y_coords = np.arange(bounds[1], bounds[3], interval)
@@ -545,7 +489,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         
         emit_progress(session_id, "\n📍 Generating grid points...", socketio)
         
-        # Generate points
         for x in x_coords:
             for y in y_coords:
                 point = Point(x, y)
@@ -556,7 +499,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                         'y': y
                     }
                     
-                    # Process buffer sets
                     for feature_name, buffer_list in buffer_sets.items():
                         if not isinstance(buffer_list, list):
                             continue
@@ -578,7 +520,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         
         points_gdf = gpd.GeoDataFrame(point_data, geometry='geometry', crs=nyeri_gdf.crs)
         
-        # Sample raster values
         emit_progress(session_id, "\n🔍 Sampling raster criteria values...", socketio)
         for raster_name, raster_path in raster_criteria.items():
             try:
@@ -588,10 +529,8 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                     points_gdf[raster_name] = values
             except Exception as e:
                 emit_error(session_id, f"⚠️ Error processing {raster_name}: {str(e)}", socketio)
-                # Instead of failing, set default values
-                points_gdf[raster_name] = 3  # Default middle value
+                points_gdf[raster_name] = 3
         
-        # Rename columns
         column_mapping = {
             'River_buffer': 'River_b',
             'Road_buffer': 'Road_b',
@@ -603,11 +542,9 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         }
         points_gdf = points_gdf.rename(columns=column_mapping)
         
-        # Clean and interpolate data
         emit_progress(session_id, "\n🧹 Cleaning and interpolating data...", socketio)
         points_gdf = clean_data(points_gdf)
         
-        # Make predictions
         emit_progress(session_id, "\n🤖 Making predictions...", socketio)
         feature_columns = ['River_b', 'Road_b', 'Settlem', 'Soil', 'Protect', 'Land_U', 'Slope']
         X = points_gdf[feature_columns].values
@@ -615,15 +552,12 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         predictions = model.predict(X_scaled)
         points_gdf['Total_Suit'] = predictions.round(2)
         
-        # Classify suitability
         points_gdf['Suitability_Class'] = points_gdf['Total_Suit'].apply(classify_suitability)
         
-        # Create output directory
         output_dir = os.path.join(os.getcwd(), 'output')
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Create full suitability map
         emit_progress(session_id, "\n🎨 Creating full suitability map...", socketio)
         full_map_path = os.path.join(output_dir, f"suitability_map_{session_id}.png")
         create_suitability_map(
@@ -633,7 +567,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             full_map_path
         )
         
-        # Create candidate sites map
         emit_progress(session_id, "\n🎯 Creating candidate sites map...", socketio)
         candidate_gdf = points_gdf[points_gdf['Total_Suit'] >= 3.5].copy()
         candidate_map_path = os.path.join(output_dir, f"candidate_sites_map_{session_id}.png")
@@ -644,12 +577,11 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             candidate_map_path
         )
         
-        # Create continuous candidate sites
         emit_progress(session_id, "\n🔄 Creating continuous candidate areas...", socketio)
         continuous_sites = create_continuous_candidate_sites(
             candidate_gdf,
-            buffer_distance=150,  # 50m buffer
-            min_area=5000,     # 1 hectare minimum
+            buffer_distance=50,
+            min_area=5000,
             socketio=socketio,
             session_id=session_id
         )
@@ -657,9 +589,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         continuous_map_path = None
         continuous_geojson = None
         
-        
         if continuous_sites is not None and not continuous_sites.empty:
-            # Create continuous candidate sites map
             continuous_map_path = os.path.join(output_dir, f"continuous_candidate_sites_{session_id}.png")
             create_continuous_candidate_map(
                 continuous_sites,
@@ -668,7 +598,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                 continuous_map_path
             )
             
-            # First save to database if engine is provided
             if engine:
                 emit_progress(session_id, "\n💾 Saving to database...", socketio)
                 db_results = save_continuous_sites_to_db(
@@ -683,7 +612,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                         'sites_created': db_results['sites_created']
                     }
             
-            # Then save to files
             continuous_files = save_continuous_sites(
                 continuous_sites,
                 output_dir,
@@ -702,8 +630,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
                     'mean_area_ha': continuous_sites['area_m2'].mean() / 10000
                 }
         
-            
-            # Add continuous sites statistics
             stats['continuous_sites'] = {
                 'total_sites': len(continuous_sites),
                 'total_area_ha': continuous_sites['area_m2'].sum() / 10000,
@@ -714,13 +640,11 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         else:
             emit_progress(session_id, "⚠️ Could not create continuous sites", socketio)
         
-        # Save to CSV
         full_csv_path = os.path.join(output_dir, f"full_suitability_{session_id}.csv")
         candidate_csv_path = os.path.join(output_dir, f"candidate_sites_{session_id}.csv")
         points_gdf.to_csv(full_csv_path, index=False)
         candidate_gdf.to_csv(candidate_csv_path, index=False)
         
-        # Calculate statistics
         stats = {
             'full_map': {
                 'total_points': len(points_gdf),
@@ -738,7 +662,6 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
             }
         }
         
-        # Emit statistics
         emit_progress(session_id, "\n📊 Analysis Results:", socketio)
         emit_progress(session_id, f"\nFull Map Statistics:", socketio)
         for class_name, count in stats['full_map']['class_distribution'].items():
