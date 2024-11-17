@@ -46,7 +46,7 @@ Base = declarative_base()
 
 
 
-    # Relationship with Route model (if needed)
+# Relationship with Route model 
 routes = relationship("Route", secondary="collection_point_routes", back_populates="collection_points")
         
 
