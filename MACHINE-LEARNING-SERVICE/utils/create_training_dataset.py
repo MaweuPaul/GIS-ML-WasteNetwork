@@ -165,25 +165,6 @@ def clean_and_process_training_data(training_gdf, session_id, socketio):
     except Exception as e:
         emit_error(session_id, f"Error in cleaning training data: {str(e)}", socketio)
         return None
-def emit_progress(session_id, message, socketio):
-    try:
-        if socketio:
-            socketio.emit('progress_update', {'session_id': session_id, 'message': message})
-            print(f"Progress: {message}")  # Also print to console for debugging
-    except Exception as e:
-        print(f"Error emitting progress: {e}")
-        print(message)
-
-def emit_error(session_id, message, socketio):
-    try:
-        if socketio:
-            socketio.emit('task_error', {'session_id': session_id, 'message': message}, room=session_id)
-            print(f"Emitted error: {message}")
-            eventlet.sleep(0)
-        else:
-            print("SocketIO instance not found. Error message:", message)
-    except Exception as e:
-        print(f"Failed to emit error message: {e}")
 
 # Define buffer distances for each feature type
 buffer_distances = {
@@ -196,7 +177,6 @@ buffer_distances = {
 def calculate_distance_to_feature(point, feature_geom):
     """Calculate the minimum distance from a point to a feature"""
     return point.distance(feature_geom)
-
 def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10000, session_id=None, socketio=None):
     try:
         emit_progress(session_id, "🚀 Initializing training dataset creation process...", socketio)
@@ -294,7 +274,7 @@ def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10
         # Define value ranges for each criterion
         value_ranges = {
             'River_b': (1, 5),
-            'Road_b': (1, 3),  # Road has 1-3 range
+            'Road_b': (1, 5),
             'Settlem': (1, 5),
             'Soil': (1, 5),
             'Protect': (1, 5),
@@ -304,19 +284,19 @@ def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10
         
         # Define weights (sum to 100%)
         weights = {
-            'River_b': 36.54/100,    # 36.54%
-            'Road_b': 25.86/100,     # 25.86%
-            'Settlem': 17.97/100,    # 17.97%
-            'Soil': 9.24/100,        # 9.24%
-            'Protect': 4.75/100,     # 4.75%
-            'Land_U': 3.30/100,      # 3.30%
-            'Slope': 2.34/100        # 2.34%
+            'River_b': 25/100,
+            'Road_b': 25/100,
+            'Settlem': 20/100,
+            'Soil': 10/100,
+            'Protect': 10/100,
+            'Land_U': 5/100,
+            'Slope': 5/100
         }
         
         # Fill NaN values with appropriate defaults
         default_values = {
             'River_b': 3,
-            'Road_b': 2,  # Middle value for road (1-3 range)
+            'Road_b': 3,
             'Settlem': 3,
             'Soil': 3,
             'Protect': 3,
@@ -370,41 +350,6 @@ def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10
         numeric_columns = training_gdf.select_dtypes(include=[np.number]).columns
         training_gdf[numeric_columns] = training_gdf[numeric_columns].round(2)
         
-        # Create visualization
-        emit_progress(session_id, "\n📊 Creating visualization...", socketio)
-        fig, ax = plt.subplots(figsize=(15, 15))
-        
-        # Plot base map
-        nyeri_gdf.plot(ax=ax, alpha=0.3, color='lightgray')
-        
-        # Plot points with total suitability coloring
-        scatter = training_gdf.plot(ax=ax, 
-                                  column='Total_Suit',
-                                  cmap='RdYlGn',
-                                  legend=True,
-                                  legend_kwds={
-                                      'label': 'Suitability Score',
-                                      'orientation': 'vertical',
-                                      'shrink': 0.8
-                                  },
-                                  markersize=30,
-                                  alpha=0.7)
-        
-        ax.set_title('Training Points Distribution\nColored by Total Suitability', 
-                    fontsize=16, pad=20)
-        
-        # Add north arrow
-        ax.annotate('N', xy=(0.98, 0.98), xycoords='axes fraction',
-                   horizontalalignment='center', verticalalignment='center',
-                   fontsize=18, fontweight='bold',
-                   path_effects=[pe.withStroke(linewidth=3, foreground="w")])
-        ax.arrow(0.98, 0.96, 0, 0.02, head_width=0.01, head_length=0.01,
-                fc='k', ec='k', transform=ax.transAxes)
-        
-        # Add scale bar
-        scalebar = ScaleBar(1, 'km', dimension='si-length', location='lower right')
-        ax.add_artist(scalebar)
-        
         # Save outputs
         emit_progress(session_id, "\n💾 Saving outputs...", socketio)
         output_dir = os.path.join(os.getcwd(), 'output')
@@ -415,9 +360,6 @@ def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10
         
         plot_path = os.path.join(output_dir, f"{base_filename}.png")
         csv_path = os.path.join(output_dir, f"{base_filename}.csv")
-        
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
         
         training_gdf.to_csv(csv_path, index=False)
         
@@ -431,29 +373,10 @@ def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10
         else:
             emit_error(session_id, "❌ Model training failed", socketio)
         
-        # Print summary statistics
-        emit_progress(session_id, "\n📊 Suitability Class Distribution:", socketio)
-        class_distribution = training_gdf['Suitability_Class'].value_counts()
-        for class_name, count in class_distribution.items():
-            percentage = (count/len(training_gdf)*100)
-            emit_progress(session_id, f"  • {class_name}: {count} points ({percentage:.1f}%)", socketio)
-        
-        emit_progress(session_id, "\n📈 Average Values by Criterion:", socketio)
-        for criterion in criteria_columns:
-            avg_value = training_gdf[criterion].mean()
-            emit_progress(session_id, f"  • {criterion}: {avg_value:.2f}", socketio)
-        
-        emit_progress(session_id, f"\n✅ Training dataset creation completed successfully!", socketio)
-        emit_progress(session_id, f"Generated {len(training_gdf)} points", socketio)
-        emit_progress(session_id, f"Files saved in: {output_dir}", socketio)
-        
         # Return model results along with other paths
         return training_gdf, plot_path, csv_path, model_results
     
-    
-        
     except Exception as e:
         emit_error(session_id, f"❌ Error in create_training_dataset: {str(e)}", socketio)
         emit_error(session_id, f"Traceback: {traceback.format_exc()}", socketio)
-        return None, None, None
-
+        return None, None, None, None
