@@ -46,13 +46,11 @@ app.use(
   })
 );
 
-// Increase JSON payload limit to 50MB
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(
   '/uploads',
   (req, res, next) => {
-    console.log('Accessing file:', req.url);
     next();
   },
   express.static(path.join(__dirname, 'uploads'), {
