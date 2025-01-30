@@ -592,7 +592,7 @@ function Incidents() {
         </div>
       </div>
 
-      {/* Incident Modal with Map */}
+      {/* Incident Modal */}
       <AnimatePresence>
         {selectedIncident && (
           <motion.div
@@ -602,22 +602,40 @@ function Incidents() {
             exit={{ opacity: 0 }}
           >
             <motion.div
-              className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+              className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
             >
               {/* Header */}
-              <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-                <h2 className="text-2xl font-bold text-gray-800">
-                  Incident Details
-                </h2>
+              <div className="sticky top-0 bg-white px-8 py-6 border-b border-gray-100 flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                  <span className="text-3xl">
+                    {
+                      incidentTypes.find(
+                        (t) => t.value === selectedIncident.type
+                      )?.icon
+                    }
+                  </span>
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">
+                      Incident Details
+                    </h2>
+                    <p className="text-gray-500 text-sm mt-1">
+                      {
+                        incidentTypes.find(
+                          (t) => t.value === selectedIncident.type
+                        )?.label
+                      }
+                    </p>
+                  </div>
+                </div>
                 <button
                   onClick={() => setSelectedIncident(null)}
                   className="p-2 hover:bg-gray-100 rounded-full transition-colors"
                 >
                   <svg
-                    className="w-6 h-6 text-gray-500"
+                    className="w-6 h-6 text-gray-400"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -633,97 +651,166 @@ function Incidents() {
               </div>
 
               {/* Content */}
-              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-                {/* Left Column - Details */}
-                <div className="space-y-6">
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">
-                        {
-                          incidentTypes.find(
-                            (t) => t.value === selectedIncident.type
-                          )?.icon
-                        }
-                      </span>
-                      <div>
-                        <h3 className="text-sm font-medium text-gray-500">
-                          Type
+              <div className="p-8">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Left Column */}
+                  <div className="space-y-6">
+                    {/* Description Card */}
+                    <div className="bg-gray-50 rounded-xl p-6">
+                      <h3 className="text-sm font-medium text-gray-500 mb-3">
+                        Description
+                      </h3>
+                      <p className="text-gray-900">
+                        {selectedIncident.description}
+                      </p>
+                    </div>
+
+                    {/* Status & Priority */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 rounded-xl p-6">
+                        <h3 className="text-sm font-medium text-gray-500 mb-3">
+                          Priority
                         </h3>
-                        <p className="text-lg font-semibold text-gray-900">
-                          {
-                            incidentTypes.find(
-                              (t) => t.value === selectedIncident.type
-                            )?.label
+                        <span
+                          className={`inline-flex px-4 py-2 rounded-full text-sm font-medium ${
+                            priorityLevels.find(
+                              (p) => p.value === selectedIncident.priority
+                            )?.color
+                          }`}
+                        >
+                          {selectedIncident.priority}
+                        </span>
+                      </div>
+                      <div className="bg-gray-50 rounded-xl p-6">
+                        <h3 className="text-sm font-medium text-gray-500 mb-3">
+                          Status
+                        </h3>
+                        <select
+                          value={selectedIncident.status}
+                          onChange={(e) =>
+                            handleStatusChange(
+                              selectedIncident.id,
+                              e.target.value
+                            )
                           }
+                          className={`w-full px-4 py-2 rounded-full text-sm font-medium border-2 focus:outline-none ${
+                            statusTypes.find(
+                              (s) => s.value === selectedIncident.status
+                            )?.color
+                          }`}
+                        >
+                          {statusTypes.map((status) => (
+                            <option key={status.value} value={status.value}>
+                              {status.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Contact Information */}
+                    <div className="bg-gray-50 rounded-xl p-6">
+                      <h3 className="text-sm font-medium text-gray-500 mb-4">
+                        Contact Information
+                      </h3>
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-white p-2 rounded-full">
+                            <svg
+                              className="w-5 h-5 text-gray-400"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-500">Name</p>
+                            <p className="text-gray-900">
+                              {selectedIncident.contactName}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="bg-white p-2 rounded-full">
+                            <svg
+                              className="w-5 h-5 text-gray-400"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-500">Phone</p>
+                            <p className="text-gray-900">
+                              {selectedIncident.contactPhone}
+                            </p>
+                          </div>
+                        </div>
+                        {selectedIncident.contactEmail && (
+                          <div className="flex items-center gap-3">
+                            <div className="bg-white p-2 rounded-full">
+                              <svg
+                                className="w-5 h-5 text-gray-400"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                            <div>
+                              <p className="text-sm text-gray-500">Email</p>
+                              <p className="text-gray-900">
+                                {selectedIncident.contactEmail}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Timestamps */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 rounded-xl p-6">
+                        <h3 className="text-sm font-medium text-gray-500 mb-2">
+                          Created
+                        </h3>
+                        <p className="text-gray-900">
+                          {format(
+                            new Date(selectedIncident.createdAt),
+                            'MMM d, yyyy HH:mm'
+                          )}
+                        </p>
+                      </div>
+                      <div className="bg-gray-50 rounded-xl p-6">
+                        <h3 className="text-sm font-medium text-gray-500 mb-2">
+                          Updated
+                        </h3>
+                        <p className="text-gray-900">
+                          {format(
+                            new Date(selectedIncident.updatedAt),
+                            'MMM d, yyyy HH:mm'
+                          )}
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-2">
-                      Description
-                    </h3>
-                    <p className="text-gray-900 bg-gray-50 p-4 rounded-lg">
-                      {selectedIncident.description}
-                    </p>
-                  </div>
-
-                  <div className="flex gap-4">
-                    <div className="flex-1">
-                      <h3 className="text-sm font-medium text-gray-500 mb-2">
-                        Priority
+                  {/* Right Column */}
+                  <div className="space-y-6">
+                    {/* Map */}
+                    <div className="bg-gray-50 rounded-xl p-6">
+                      <h3 className="text-sm font-medium text-gray-500 mb-3">
+                        Location
                       </h3>
-                      <span
-                        className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${
-                          priorityLevels.find(
-                            (p) => p.value === selectedIncident.priority
-                          )?.color
-                        }`}
-                      >
-                        {selectedIncident.priority}
-                      </span>
-                    </div>
-
-                    <div className="flex-1">
-                      <h3 className="text-sm font-medium text-gray-500 mb-2">
-                        Status
-                      </h3>
-                      <select
-                        value={selectedIncident.status}
-                        onChange={(e) =>
-                          handleStatusChange(
-                            selectedIncident.id,
-                            e.target.value
-                          )
-                        }
-                        className={`w-full px-3 py-1 rounded-full text-sm font-medium border-2 focus:outline-none focus:ring-2 ${
-                          statusTypes.find(
-                            (s) => s.value === selectedIncident.status
-                          )?.color
-                        }`}
-                      >
-                        {statusTypes.map((status) => (
-                          <option key={status.value} value={status.value}>
-                            {status.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column - Map & Photos */}
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-2">
-                      Location
-                    </h3>
-                    <div className="bg-gray-50 p-4 rounded-lg">
                       <p className="text-gray-900 mb-4">
                         {locationDetails?.address}
                       </p>
-                      <div className="h-[300px] rounded-lg overflow-hidden shadow-inner">
+                      <div className="h-[400px] rounded-xl overflow-hidden shadow-inner">
                         <MapContainer
                           center={
                             locationDetails?.coordinates || [-0.4246, 36.9452]
@@ -740,49 +827,50 @@ function Incidents() {
                           )}
                         </MapContainer>
                       </div>
-                      <p className="text-xs text-gray-500 mt-2">
+                      <p className="text-xs text-gray-500 mt-3">
                         Coordinates:{' '}
                         {locationDetails?.coordinates[0].toFixed(6)},{' '}
                         {locationDetails?.coordinates[1].toFixed(6)}
                       </p>
                     </div>
-                  </div>
 
-                  {selectedIncident.photos?.length > 0 && (
-                    <div>
-                      <h3 className="text-sm font-medium text-gray-500 mb-2">
-                        Photos
-                      </h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        {selectedIncident.photos.map((photo, index) => (
-                          <div
-                            key={index}
-                            className="relative aspect-square rounded-lg overflow-hidden shadow-md"
-                          >
-                            <img
-                              src={`http://localhost:3000/${photo}`}
-                              alt={`Incident photo ${index + 1}`}
-                              className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                            />
-                          </div>
-                        ))}
+                    {/* Photos */}
+                    {selectedIncident.photos?.length > 0 && (
+                      <div className="bg-gray-50 rounded-xl p-6">
+                        <h3 className="text-sm font-medium text-gray-500 mb-4">
+                          Photos
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          {selectedIncident.photos.map((photo, index) => (
+                            <div
+                              key={index}
+                              className="aspect-square rounded-xl overflow-hidden shadow-sm"
+                            >
+                              <img
+                                src={`http://localhost:3000/${photo}`}
+                                alt={`Incident photo ${index + 1}`}
+                                className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* Footer */}
-              <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end gap-3">
+              <div className="sticky bottom-0 bg-white px-8 py-6 border-t border-gray-100 flex justify-end gap-4">
                 <button
                   onClick={() => setSelectedIncident(null)}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  className="px-6 py-2.5 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                 >
                   Close
                 </button>
                 <button
                   onClick={() => setIsDeleteModalOpen(true)}
-                  className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                  className="px-6 py-2.5 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
                 >
                   Delete Incident
                 </button>

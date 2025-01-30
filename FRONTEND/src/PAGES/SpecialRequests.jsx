@@ -43,7 +43,7 @@ const WASTE_TYPES = [
 ];
 
 function SpecialPickups() {
-  // State Management
+
   const [pickups, setPickups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedPickup, setSelectedPickup] = useState(null);
@@ -65,7 +65,6 @@ function SpecialPickups() {
   });
   const [showNewRequestModal, setShowNewRequestModal] = useState(false);
 
-  // Data Fetching
   useEffect(() => {
     fetchPickups();
   }, [pagination.currentPage, filters, sortConfig, searchTerm]);

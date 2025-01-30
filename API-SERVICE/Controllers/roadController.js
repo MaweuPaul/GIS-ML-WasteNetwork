@@ -48,20 +48,15 @@ const createRoad = async (req, res) => {
         .map((feature) => {
           let { type, coordinates, bbox } = feature.geometry;
           const { name, ...otherProperties } = feature.properties;
-
           // Convert MultiLineString to LineString if it contains only one line
           if (type === 'MultiLineString' && coordinates.length === 1) {
             type = 'LineString';
             coordinates = coordinates[0];
           }
-
-          // Skip if the geometry type is not LineString
           if (type !== 'LineString') {
             return null;
           }
-
           const bboxArray = bbox ? `{${bbox.join(',')}}` : 'NULL';
-
           return prisma.$executeRaw`
           INSERT INTO "Road" (
             "name",
@@ -87,7 +82,7 @@ const createRoad = async (req, res) => {
           ) RETURNING *;
         `;
         })
-        .filter(Boolean) // Filter out null values
+        .filter(Boolean)
     );
 
     res.status(201).json({

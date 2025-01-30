@@ -5,7 +5,6 @@ def calculate_weights():
     """
     Calculate weights for landfill site suitability criteria using AHP with Saaty's scale.
     """
-    # Define the criteria based on the provided datasets
     criteria = [
         'River',
         'Road',
@@ -34,11 +33,7 @@ def calculate_weights():
     # Calculate weights using the geometric mean method
     geometric_mean = np.prod(matrix, axis=1) ** (1/n)
     weights = geometric_mean / np.sum(geometric_mean)
-    
-    # Convert weights to percentages
     weights_percent = weights * 100
-
-    # Create a dictionary of criteria and their corresponding weights
     weights_dict = dict(zip(criteria, weights_percent))
 
     return weights_dict, matrix

@@ -4,7 +4,6 @@ import {
   MapContainer,
   TileLayer,
   Polygon,
-  ZoomControl,
   FeatureGroup,
   Popup,
   useMap,
@@ -136,7 +135,6 @@ const MapEditor = ({ zone, onUpdate }) => {
     </FeatureGroup>
   );
 };
-// CollectionScheduleManager.jsx (continued)
 
 function CollectionScheduleManager() {
   const [zones, setZones] = useState([]);
@@ -322,7 +320,6 @@ function CollectionScheduleManager() {
       </div>
     );
   }
-  // CollectionScheduleManager.jsx (continued)
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -490,8 +487,6 @@ function CollectionScheduleManager() {
               </div>
 
               <form onSubmit={handleZoneSubmit} className="space-y-4">
-                {/* Form fields continue in Part 4... */}//
-                CollectionScheduleManager.jsx (continued)
                 {/* Form Fields */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

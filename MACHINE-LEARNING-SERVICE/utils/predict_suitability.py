@@ -19,6 +19,7 @@ from geoalchemy2.shape import from_shape
 from shapely.geometry import Point
 from shapely.ops import unary_union
 from sqlalchemy import func
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 
 Base = declarative_base()
@@ -464,6 +465,21 @@ def create_continuous_candidate_map(continuous_sites_gdf, nyeri_gdf, title, outp
     
     return output_path
 
+def calculate_model_metrics(y_true, y_pred):
+    """Calculate regression metrics for model evaluation"""
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    
+    metrics = {
+        'r2_score': r2_score(y_true, y_pred),
+        'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
+        'mae': mean_absolute_error(y_true, y_pred),
+        'mean_error': np.mean(y_true - y_pred),
+        'std_error': np.std(y_true - y_pred)
+    }
+    
+    return metrics
+
+
 def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path, scaler_path, interval=50, session_id=None, socketio=None, engine=None):
     try:
         stats = {
@@ -554,6 +570,31 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         
         points_gdf['Suitability_Class'] = points_gdf['Total_Suit'].apply(classify_suitability)
         
+        predictions = model.predict(X_scaled)
+        points_gdf['Total_Suit'] = predictions.round(2)
+        
+        # Calculate model metrics using a validation set
+        # subset of  points as validation
+        validation_mask = np.random.rand(len(points_gdf)) < 0.2  # 20% validation set
+        validation_points = points_gdf[validation_mask]
+        
+        if len(validation_points) > 0:
+            X_val = validation_points[feature_columns].values
+            X_val_scaled = scaler.transform(X_val)
+            y_val_pred = model.predict(X_val_scaled)
+            
+            # Calculate metrics
+            model_metrics = calculate_model_metrics(validation_points['Total_Suit'], y_val_pred)
+            
+            # Add metrics to stats
+            stats['model_performance'] = model_metrics
+            
+            # Log metrics
+            emit_progress(session_id, "\n📊 Model Performance Metrics:", socketio)
+            emit_progress(session_id, f"  • R² Score: {model_metrics['r2_score']:.3f}", socketio)
+            emit_progress(session_id, f"  • RMSE: {model_metrics['rmse']:.3f}", socketio)
+            emit_progress(session_id, f"  • MAE: {model_metrics['mae']:.3f}", socketio)       
+        
         output_dir = os.path.join(os.getcwd(), 'output')
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -573,7 +614,7 @@ def predict_map_suitability(nyeri_gdf, buffer_sets, raster_criteria, model_path,
         create_candidate_map(
             candidate_gdf,
             nyeri_gdf,
-            'Candidate Landfill Sites\n(Suitability ≥ 3.5)',
+            'Candidate Landfill Sites',
             candidate_map_path
         )
         

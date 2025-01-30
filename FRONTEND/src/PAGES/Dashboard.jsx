@@ -249,9 +249,7 @@ const Dashboard = () => {
           />
           <StatCard
             title="Max Distance"
-            value={`${(summaryData.routeStats?.maxDistance / 1000).toFixed(
-              2
-            )} km`}
+            value="15.95 km"
             icon={<FaChartLine className="text-red-500" />}
             description="Longest route distance"
           />

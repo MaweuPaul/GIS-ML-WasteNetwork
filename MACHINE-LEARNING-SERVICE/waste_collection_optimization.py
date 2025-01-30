@@ -31,6 +31,7 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 import warnings
 import datetime
+from sklearn.preprocessing import StandardScaler
 # Import contextily for basemap
 
 import contextily as ctx
@@ -41,6 +42,7 @@ from geoalchemy2 import Geometry
 from sqlalchemy.orm import Session
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Point
+from scipy.spatial.distance import pdist
 
 Base = declarative_base()
 
@@ -323,26 +325,86 @@ def save_collection_points_to_db(markers_data, engine, socketio=None, session_id
         traceback.print_exc()
         return False
 
-def perform_clustering(grid_gdf, n_clusters=5, socketio=None, session_id=None):
-    emit_progress(f"Performing clustering with {n_clusters} clusters", socketio, session_id)
+def perform_clustering_analysis(grid_gdf, socketio=None, session_id=None):
+    emit_progress("Starting advanced clustering analysis", socketio, session_id)
+    
     try:
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        required_columns = ['road_score', 'settlement_score']
-        missing_columns = [col for col in required_columns if col not in grid_gdf.columns]
-        if missing_columns:
-            emit_progress(f"Missing columns for clustering: {missing_columns}", socketio, session_id)
-            logger.error(f"Missing columns for clustering: {missing_columns}")
-            return grid_gdf
+        # Prepare features for clustering
+        features = grid_gdf[grid_gdf['Suitability_Class'] == 'Highly Suitable'].copy()
         
-        features = grid_gdf[['road_score', 'settlement_score']].values
-        grid_gdf['cluster'] = kmeans.fit_predict(features)
-        emit_progress("Clustering completed successfully.", socketio, session_id)
+        if features.empty:
+            emit_progress("No highly suitable areas found for clustering", socketio, session_id)
+            return grid_gdf
+            
+        # Extract coordinates and scores
+        X = np.array([[geom.centroid.x, geom.centroid.y] for geom in features.geometry])
+        scores = features['combined_score'].values.reshape(-1, 1)
+        
+        # Normalize coordinates and scores
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        scores_scaled = scaler.fit_transform(scores)
+        
+        # Combine spatial and score features
+        clustering_features = np.hstack([X_scaled, scores_scaled])
+        
+        # First pass: K-means clustering
+        emit_progress("Performing K-means clustering", socketio, session_id)
+        n_clusters = min(5, len(features))  
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        kmeans_labels = kmeans.fit_predict(clustering_features)
+        
+        # Second pass: DBSCAN for each K-means cluster
+        emit_progress("Refining clusters with DBSCAN", socketio, session_id)
+        final_labels = np.zeros_like(kmeans_labels) - 1  # Initialize with -1
+        current_label = 0
+        
+        for k in range(n_clusters):
+            # Get points in current K-means cluster
+            mask = kmeans_labels == k
+            if not np.any(mask):
+                continue
+                
+            cluster_points = X[mask]  # Use original coordinates for DBSCAN
+            
+            # Calculate adaptive DBSCAN parameters
+            if len(cluster_points) > 1:  # Check if more than one point
+                distances = pdist(cluster_points)
+                if len(distances) > 0:  # Check if distances array is not empty
+                    eps = np.percentile(distances, 10)  # Use 10th percentile as eps
+                else:
+                    eps = 50  # Default value if no distances
+            else:
+                eps = 50  # Default value for single point
+                
+            min_samples = max(3, int(np.sum(mask) * 0.1))  # At least 10% of points
+            
+            # Apply DBSCAN
+            dbscan = DBSCAN(eps=eps, min_samples=min_samples)
+            db_labels = dbscan.fit_predict(cluster_points)
+            
+            # Update final labels
+            for db_label in np.unique(db_labels[db_labels >= 0]):
+                final_labels[mask][db_labels == db_label] = current_label
+                current_label += 1
+        
+        # Initialize cluster labels for all grid cells
+        grid_gdf['cluster_label'] = -1
+        
+        # Update cluster labels only for highly suitable areas
+        grid_gdf.loc[features.index, 'cluster_label'] = final_labels
+        
+        # Log clustering results
+        n_clusters_found = len(np.unique(final_labels[final_labels >= 0]))
+        emit_progress(f"Found {n_clusters_found} final clusters after DBSCAN refinement", socketio, session_id)
+        
         return grid_gdf
+        
     except Exception as e:
-        emit_progress(f"Error during clustering: {str(e)}", socketio, session_id)
-        logger.error(f"Error during clustering: {str(e)}")
+        emit_progress(f"Error in clustering analysis: {str(e)}", socketio, session_id)
+        logger.error(f"Clustering error: {str(e)}")
+        traceback.print_exc()
         return grid_gdf
-
 def select_optimal_locations(grid_gdf, socketio=None, session_id=None):
     emit_progress("Selecting optimal locations", socketio, session_id)
     try:
@@ -652,7 +714,7 @@ def optimize_waste_collection(engine, session_id, socketio, aoi_gdf):
        emit_progress(f"Created markers map with {len(markers_df)} collection points", socketio, session_id)
     else:
        emit_progress("No suitable collection points found", socketio, session_id)
-    grid_gdf = perform_clustering(grid_gdf, n_clusters=5, socketio=socketio, session_id=session_id)
+    grid_gdf = perform_clustering_analysis(grid_gdf, socketio, session_id)
     if grid_gdf is None:
         emit_progress("Clustering failed. Aborting optimization process.", socketio, session_id)
         return None

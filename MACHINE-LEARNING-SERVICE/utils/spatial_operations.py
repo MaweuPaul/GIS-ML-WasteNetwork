@@ -165,9 +165,9 @@ def soil_suitability_mapping(soil_type):
         
         # Define exact soil type mappings based on your database values
         soil_mappings = {
-            'Bk31-2a': 2,  # Calcic Cambisols - Less suitable
+            'Bk31-2a': 4,  # Calcic Cambisols - Less suitable
             'Ne12-2c': 3,  # Eutric Nitosols - Moderately suitable
-            'Nh2-2c': 2    # Humic Nitosols - Less suitable
+            'Nh2-2c': 4    # Humic Nitosols - Less suitable
         }
         
         # Check for exact matches
@@ -424,7 +424,7 @@ def fetch_nyeri_boundary(engine, session_id, socketio):
         """
         gdf = fetch_data_from_postgis(query, engine, session_id, socketio)
         
-        # Add debug logging
+       
         emit_progress(session_id, f"Type of fetched data: {type(gdf)}", socketio)
         
         if gdf is None or gdf.empty:
@@ -1366,60 +1366,60 @@ def run_full_spatial_operations(engine, session_id, socketio):
                         #        }
                 
                             
-                            prediction_results = predict_map_suitability(
-                                nyeri_gdf=nyeri_gdf,
-                                raster_criteria=raster_criteria,
-                                buffer_sets=buffer_sets,
-                                model_path=model_path,
-                                scaler_path=scaler_path,
-                                interval=25,
-                                session_id=session_id,
-                                socketio=socketio,
-                                engine=engine
-                            )
+                    #         prediction_results = predict_map_suitability(
+                    #             nyeri_gdf=nyeri_gdf,
+                    #             raster_criteria=raster_criteria,
+                    #             buffer_sets=buffer_sets,
+                    #             model_path=model_path,
+                    #             scaler_path=scaler_path,
+                    #             interval=25,
+                    #             session_id=session_id,
+                    #             socketio=socketio,
+                    #             engine=engine
+                    #         )
                             
-                            if prediction_results:
-                                # Access the statistics from the results dictionary
-                                stats = prediction_results['stats']
+                    #         if prediction_results:
+                    #             # Access the statistics from the results dictionary
+                    #             stats = prediction_results['stats']
                                 
-                                # Update buffer images with all the paths
-                                buffer_images['Suitability_Prediction'] = prediction_results['full_map_path'].replace('\\', '/')
-                                buffer_images['Candidate_Sites'] = prediction_results['candidate_map_path'].replace('\\', '/')
-                                if prediction_results['continuous_map_path']:
-                                    buffer_images['Continuous_Sites'] = prediction_results['continuous_map_path'].replace('\\', '/')
+                    #             # Update buffer images with all the paths
+                    #             buffer_images['Suitability_Prediction'] = prediction_results['full_map_path'].replace('\\', '/')
+                    #             buffer_images['Candidate_Sites'] = prediction_results['candidate_map_path'].replace('\\', '/')
+                    #             if prediction_results['continuous_map_path']:
+                    #                 buffer_images['Continuous_Sites'] = prediction_results['continuous_map_path'].replace('\\', '/')
                                 
-                                emit_progress(session_id, "✅ Map-wide suitability prediction completed successfully.", socketio)
-                                emit_progress(session_id, "\n📊 Prediction Statistics:", socketio)
+                    #             emit_progress(session_id, "✅ Map-wide suitability prediction completed successfully.", socketio)
+                    #             emit_progress(session_id, "\n📊 Prediction Statistics:", socketio)
                                 
-                                # Full map statistics
-                                emit_progress(session_id, "\nFull Map Statistics:", socketio)
-                                emit_progress(session_id, f"• Total points analyzed: {stats['full_map']['total_points']}", socketio)
-                                emit_progress(session_id, f"• Minimum suitability: {stats['full_map']['min_score']:.2f}", socketio)
-                                emit_progress(session_id, f"• Maximum suitability: {stats['full_map']['max_score']:.2f}", socketio)
-                                emit_progress(session_id, f"• Mean suitability: {stats['full_map']['mean_score']:.2f}", socketio)
+                    #             # Full map statistics
+                    #             emit_progress(session_id, "\nFull Map Statistics:", socketio)
+                    #             emit_progress(session_id, f"• Total points analyzed: {stats['full_map']['total_points']}", socketio)
+                    #             emit_progress(session_id, f"• Minimum suitability: {stats['full_map']['min_score']:.2f}", socketio)
+                    #             emit_progress(session_id, f"• Maximum suitability: {stats['full_map']['max_score']:.2f}", socketio)
+                    #             emit_progress(session_id, f"• Mean suitability: {stats['full_map']['mean_score']:.2f}", socketio)
                                 
-                                # Class distribution
-                                emit_progress(session_id, "\n📊 Area Distribution:", socketio)
-                                for class_name, count in stats['full_map']['class_distribution'].items():
-                                    percentage = (count / stats['full_map']['total_points']) * 100
-                                    emit_progress(session_id, f"• {class_name}: {count} points ({percentage:.1f}%)", socketio)
+                    #             # Class distribution
+                    #             emit_progress(session_id, "\n📊 Area Distribution:", socketio)
+                    #             for class_name, count in stats['full_map']['class_distribution'].items():
+                    #                 percentage = (count / stats['full_map']['total_points']) * 100
+                    #                 emit_progress(session_id, f"• {class_name}: {count} points ({percentage:.1f}%)", socketio)
                                 
-                                # Candidate sites statistics
-                                if 'continuous_sites' in stats:
-                                    emit_progress(session_id, "\n📊 Continuous Sites Statistics:", socketio)
-                                    emit_progress(session_id, f"• Total suitable sites: {stats['continuous_sites']['total_sites']}", socketio)
-                                    emit_progress(session_id, f"• Total area: {stats['continuous_sites']['total_area_ha']:.2f} ha", socketio)
-                                    emit_progress(session_id, f"• Minimum site area: {stats['continuous_sites']['min_area_ha']:.2f} ha", socketio)
-                                    emit_progress(session_id, f"• Maximum site area: {stats['continuous_sites']['max_area_ha']:.2f} ha", socketio)
-                                    emit_progress(session_id, f"• Mean site area: {stats['continuous_sites']['mean_area_ha']:.2f} ha", socketio)
-                            else:
-                                emit_error(session_id, "❌ Failed to create map-wide suitability prediction.", socketio)
+                    #             # Candidate sites statistics
+                    #             if 'continuous_sites' in stats:
+                    #                 emit_progress(session_id, "\n📊 Continuous Sites Statistics:", socketio)
+                    #                 emit_progress(session_id, f"• Total suitable sites: {stats['continuous_sites']['total_sites']}", socketio)
+                    #                 emit_progress(session_id, f"• Total area: {stats['continuous_sites']['total_area_ha']:.2f} ha", socketio)
+                    #                 emit_progress(session_id, f"• Minimum site area: {stats['continuous_sites']['min_area_ha']:.2f} ha", socketio)
+                    #                 emit_progress(session_id, f"• Maximum site area: {stats['continuous_sites']['max_area_ha']:.2f} ha", socketio)
+                    #                 emit_progress(session_id, f"• Mean site area: {stats['continuous_sites']['mean_area_ha']:.2f} ha", socketio)
+                    #         else:
+                    #             emit_error(session_id, "❌ Failed to create map-wide suitability prediction.", socketio)
                                                         
-                            emit_progress(session_id, "Training dataset and model created successfully.", socketio)
-                        else:
-                            emit_error(session_id, "Training dataset created but model training failed.", socketio)
-                    else:
-                        emit_error(session_id, "Failed to create training dataset.", socketio)
+                    #         emit_progress(session_id, "Training dataset and model created successfully.", socketio)
+                    #     else:
+                    #         emit_error(session_id, "Training dataset created but model training failed.", socketio)
+                    # else:
+                    #     emit_error(session_id, "Failed to create training dataset.", socketio)
                                     
                 except Exception as e:
                             emit_error(session_id, f"Error creating training dataset: {str(e)}", socketio)

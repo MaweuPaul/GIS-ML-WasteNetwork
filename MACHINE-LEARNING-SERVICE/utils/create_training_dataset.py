@@ -10,6 +10,8 @@ from matplotlib_scalebar.scalebar import ScaleBar
 import matplotlib.patheffects as pe
 import datetime
 import eventlet
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import r2_score, mean_squared_error
 
 # Import the suitability mapping functions from spatial_operations.py
 from utils.suitability_mapping import (
@@ -177,6 +179,81 @@ buffer_distances = {
 def calculate_distance_to_feature(point, feature_geom):
     """Calculate the minimum distance from a point to a feature"""
     return point.distance(feature_geom)
+
+def refine_model(model, X_train, X_test, y_train, y_test, session_id, socketio):
+    """
+    Refine the Random Forest model through hyperparameter tuning and cross-validation
+    """
+   
+    
+    emit_progress(session_id, "\n🔄 Starting model refinement process...", socketio)
+    
+    try:
+        # Define hyperparameter grid
+        param_grid = {
+            'n_estimators': [100, 200, 300],
+            'max_depth': [10, 20, 30, None],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4]
+        }
+        
+        # Initialize GridSearchCV
+        grid_search = GridSearchCV(
+            estimator=model,
+            param_grid=param_grid,
+            cv=5,
+            n_jobs=-1,
+            scoring='r2',
+            verbose=1
+        )
+        
+        emit_progress(session_id, "Performing grid search for optimal parameters...", socketio)
+        grid_search.fit(X_train, y_train)
+        
+        # Get best model
+        best_model = grid_search.best_estimator_
+        
+        # Evaluate refined model
+        train_score = r2_score(y_train, best_model.predict(X_train))
+        test_score = r2_score(y_test, best_model.predict(X_test))
+        
+        emit_progress(session_id, "\n📊 Model Refinement Results:", socketio)
+        emit_progress(session_id, f"Best Parameters: {grid_search.best_params_}", socketio)
+        emit_progress(session_id, f"Training R² Score: {train_score:.4f}", socketio)
+        emit_progress(session_id, f"Testing R² Score: {test_score:.4f}", socketio)
+        
+        # Check for overfitting
+        if train_score - test_score > 0.1:
+            emit_progress(session_id, "\n⚠️ Warning: Model might be overfitting", socketio)
+            
+            # Additional refinement for overfitting
+            best_model = handle_overfitting(best_model, X_train, y_train, X_test, y_test)
+        
+        return best_model, {
+            'best_params': grid_search.best_params_,
+            'train_score': train_score,
+            'test_score': test_score
+        }
+        
+    except Exception as e:
+        emit_error(session_id, f"Error in model refinement: {str(e)}", socketio)
+        return None, None
+
+def handle_overfitting(model, X_train, y_train, X_test, y_test):
+    """
+    Handle overfitting by adjusting model parameters
+    """
+    # Increase regularization
+    model.set_params(
+        max_depth=min(model.max_depth - 5 if model.max_depth else 15, 10),
+        min_samples_leaf=max(model.min_samples_leaf, 2),
+        min_samples_split=max(model.min_samples_split, 5)
+    )
+    
+    # Retrain with adjusted parameters
+    model.fit(X_train, y_train)
+    
+    return model
 def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10000, session_id=None, socketio=None):
     try:
         emit_progress(session_id, "🚀 Initializing training dataset creation process...", socketio)
@@ -367,13 +444,27 @@ def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10
         emit_progress(session_id, "\n🤖 Starting model training...", socketio)
         model_results = train_model(csv_path, session_id, socketio)
         
-        if model_results:
-            emit_progress(session_id, "\n✅ Model training completed successfully!", socketio)
-            emit_progress(session_id, f"Model R² Score: {model_results['metrics']['test_r2']:.4f}", socketio)
-        else:
-            emit_error(session_id, "❌ Model training failed", socketio)
+
+        if model_results and 'model' in model_results:
+            # Refine the model
+            emit_progress(session_id, "\n🔄 Starting model refinement...", socketio)
+            refined_model, refinement_results = refine_model(
+                model_results['model'],
+                model_results['X_train'],
+                model_results['X_test'],
+                model_results['y_train'],
+                model_results['y_test'],
+                session_id,
+                socketio
+            )
+            
+            if refined_model is not None:
+                model_results['model'] = refined_model
+                model_results['refinement_results'] = refinement_results
+                emit_progress(session_id, "\n✅ Model refinement completed successfully!", socketio)
+            else:
+                emit_error(session_id, "❌ Model refinement failed", socketio)
         
-        # Return model results along with other paths
         return training_gdf, plot_path, csv_path, model_results
     
     except Exception as e:
