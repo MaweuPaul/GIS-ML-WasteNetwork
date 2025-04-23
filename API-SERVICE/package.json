@@ -1,23 +1,47 @@
 {
-  "name": "backend",
+  "name": "gis-ml-wastenetwork-api",
   "version": "1.0.0",
-  "description": "",
+  "description": "API service for GIS-ML-WasteNetwork, providing GIS data and waste management functionality",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "console-ninja node --watch server.js"
+    "test": "jest",
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "lint": "eslint ."
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "gis",
+    "api",
+    "waste-management",
+    "geospatial",
+    "postgis"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
     "@prisma/client": "^5.19.1",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "express-validator": "^7.0.1",
     "geojson": "^0.5.0",
     "multer": "^1.4.5-lts.1",
-    "prisma": "^5.19.1"
+    "prisma": "^5.19.1",
+    "pg": "^8.11.3",
+    "jsonwebtoken": "^9.0.2",
+    "helmet": "^7.1.0",
+    "compression": "^1.7.4",
+    "winston": "^3.11.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.55.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
