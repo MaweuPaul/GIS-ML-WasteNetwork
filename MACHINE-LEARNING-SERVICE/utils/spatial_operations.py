@@ -282,7 +282,7 @@ def create_suitability_map(data, title, output_path, transform, crs, nyeri_gdf, 
                 connection_params = {
                  'dbname': 'wms',
                   'user': 'postgres',
-                  'password': 'p#maki012412',
+                  'password': '',
                   'host': 'localhost',
                   'port': '5432'
                 }
