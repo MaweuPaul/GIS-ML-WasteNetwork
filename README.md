@@ -1,234 +1,102 @@
-# Machine Learning Implementation for Waste Management Optimization
+# GIS-ML-WasteNetwork
 
-This document provides a comprehensive explanation of the machine learning implementation used in the GIS-ML-WasteNetwork project for optimizing waste management operations.
+A GIS-driven decision-support tool for siting municipal waste infrastructure and optimizing collection routes, built as a final-year research project around Nyeri, Kenya. It combines multi-criteria suitability analysis, machine learning, and network routing behind a React frontend: upload an area of interest as a shapefile (converted to GeoJSON, with real coordinates and a bounding box), run the pipeline, and get back a ranked suitability surface, clustered candidate collection points, and optimized routes to existing landfills.
 
-## 1. Training Dataset Creation
+## Table of Contents
+- [What Is This?](#what-is-this)
+- [Why It's Built This Way](#why-its-built-this-way)
+- [Running It](#running-it)
+- [Repository Layout](#repository-layout)
+- [The Suitability & Routing Pipeline](#the-suitability--routing-pipeline)
+- [Contributing](#contributing)
+- [Roadmap / To Be Done](#roadmap--to-be-done)
+- [Disclaimer](#disclaimer)
 
-The system begins by creating a robust training dataset through the following steps:
+## What Is This?
 
-### 1.1 Point Generation and Sampling
-```python
-def create_training_dataset(nyeri_gdf, buffer_sets, raster_criteria, n_points=10000):
-    # Generate random points within study area
-    points = []
-    for point in generated_points:
-        point_info = {
-            'geometry': point,
-            'x': point.x,
-            'y': point.y
-        }
-        # Sample values from each buffer zone and raster
+Deciding where a new landfill or waste-collection point should go is normally done by a planner overlaying constraint layers, rivers, roads, settlements, protected areas, soil, slope, land use, on a map and judging by eye whether a candidate site is "far enough" from each. That judgment is hard to defend or repeat: two planners can disagree, and nobody can rerun last year's decision to check it against new data. This project turns the same process into code: every constraint is buffered at defined distances, weighted by AHP-derived importance, and fed into a trained model that scores the whole study area, so "this site is suitable" becomes a reproducible number instead of an opinion.
+
+The output isn't just a single best site. The pipeline produces a continuous suitability surface, classifies it into suitability bands, clusters the highest-scoring cells into a practical number of candidate collection points, and then routes between those points and existing landfills over the real road network, so the result is something a municipality could actually act on rather than just a heatmap.
+
+## Why It's Built This Way
+
+A few structural choices here aren't obvious from the code alone, so it's worth writing down the reasoning:
+
+**Three separate services instead of one monolith.** The API service (Node/Express + Prisma + PostGIS) owns spatial CRUD, the frontend (React) is purely presentational, and the ML service (Flask + Socket.IO) does the actual analysis. Splitting them this way means the heavy, long-running spatial computation (network downloads, clustering, model inference) lives in one place with its own process model, and can emit live progress over its own socket connection without the request/response API needing to know anything about job state.
+
+**Every constraint layer is its own table, not one generic "layer" table.** Soil, rivers, roads, settlements, geology, protected areas, and land use each have their own Prisma model and controller, even though they're structurally similar. Keeping them separate means each one's specific attributes (soil type, road class, protection designation) are first-class columns instead of buried in a generic JSON blob, which matters when the suitability pipeline needs to query and buffer each layer differently.
+
+**Raw SQL for the spatial writes, Prisma for everything else.** PostGIS operations like `ST_SetSRID(ST_GeomFromGeoJSON(...))` aren't expressible through Prisma's query builder, so every controller that writes geometry drops down to `$queryRaw`/`$executeRaw` with tagged-template parameters for that one insert or update, then goes back to the ORM for reads and simple CRUD. That keeps the geometry-handling code isolated and easy to find rather than mixed through every query.
+
+**Socket.IO for the ML pipeline, plain REST for everything else.** A suitability run can take minutes (training-data generation, model fit, clustering, then an OSM network download and routing pass), so the frontend needs incremental progress rather than a single blocking response. Everything else, layer CRUD, incident reports, special pickups, is a normal request/response and stays plain REST.
+
+**Two-stage clustering (K-means then DBSCAN) instead of one algorithm.** K-means alone forces a fixed number of clusters and doesn't respect the actual shape of high-suitability regions; DBSCAN alone is sensitive to density variation across a whole study area. Running K-means first to get a manageable number of regional groups, then DBSCAN within each group with adaptively chosen `eps`/`min_samples`, gets clusters that are both regionally sensible and locally well-shaped.
+
+## Running It
+
+```bash
+# API service (Express + Prisma + PostGIS)
+cd API-SERVICE
+npm install
+npx prisma generate
+npm start
+
+# Frontend (React + Vite)
+cd FRONTEND
+npm install
+npm run dev
+
+# ML service (Flask + Socket.IO)
+cd MACHINE-LEARNING-SERVICE
+pip install -r requirements.txt
+python ap.py
 ```
 
-Key features:
-- Generates random points within study area
-- Samples values from buffer zones and raster criteria
-- Validates points against study area boundaries
-- Handles batch processing for large datasets
+The API service needs a `DATABASE_URL` environment variable pointing at a PostGIS-enabled Postgres database (see `API-SERVICE/prisma/schema.prisma` for the schema Prisma expects). Open the frontend's printed URL, upload an area-of-interest shapefile (and the other constraint layers, also as shapefiles/rasters), and start a run from there.
 
-### 1.2 Feature Engineering
+## Repository Layout
 
-The system processes several key geographical features with specific weights:
-```python
-weights = {
-    'River': 0.25,        # 25% - Environmental impact
-    'Road': 0.25,         # 25% - Accessibility
-    'Settlement': 0.20,   # 20% - Population considerations
-    'Soil': 0.10,         # 10% - Ground stability
-    'Protected_Areas': 0.10,
-    'Land_Use': 0.05,
-    'Slope': 0.05
-}
+```
+GIS-ML-WasteNetwork/
+├── API-SERVICE/                Express + Prisma + PostGIS
+│   ├── Controllers/            One controller per spatial layer (soil, rivers, roads, ...)
+│   ├── Routes/                 One route file per controller
+│   ├── prisma/schema.prisma    DB schema for every layer + AOI + incidents
+│   └── server.js               App entrypoint, mounts every /api/* route
+├── FRONTEND/                   React (Vite) UI: layer upload + results viewer
+│   └── src/
+│       ├── PAGES/
+│       └── components/
+├── MACHINE-LEARNING-SERVICE/   Flask + Flask-SocketIO
+│   ├── ap.py                   App entrypoint, kicks off/streams a pipeline run
+│   ├── utils/
+│   │   ├── ahp.py                     AHP weighting for constraint layers
+│   │   ├── create_training_dataset.py Random-point sampling across buffers + rasters
+│   │   ├── feature_preparation.py     Feature engineering for the model
+│   │   ├── ml_analysis.py             RandomForestRegressor training/scoring
+│   │   ├── grid_analysis.py           K-means + DBSCAN clustering
+│   │   ├── network_analysis.py        Route optimization over the OSM road graph
+│   │   ├── suitability_mapping.py     Suitability surface + classified output
+│   │   ├── predict_suitability.py     Inference with a saved model
+│   │   └── database.py                PostGIS read/write helpers
+│   └── models/train_model.py   Standalone training script
+└── docs/ML_DOCUMENTATION.md    Full write-up of the ML pipeline (weights, buffers, model, clustering, routing)
 ```
 
-Buffer distances for each feature:
-```python
-buffer_distances = {
-    'River': [300, 1000, 1500, 2000],
-    'Road': [400, 800, 1000, 1200],
-    'Settlement': [400, 900, 1500, 2100],
-    'Protected_Areas': [300, 1000, 1500, 2000, 2500]
-}
-```
+## The Suitability & Routing Pipeline
 
-## 2. Machine Learning Model
+The full technical detail, feature weights, buffer distances per constraint, the Random Forest architecture and hyperparameter search, the clustering math, and the network-routing step, is documented separately in [docs/ML_DOCUMENTATION.md](docs/ML_DOCUMENTATION.md) rather than duplicated here.
 
-### 2.1 Model Architecture
+## Contributing
 
-The system uses a Random Forest Regressor with optimized hyperparameters:
-```python
-class LandfillSuitabilityML:
-    def __init__(self, session_id, socketio):
-        self.model = RandomForestRegressor(
-            n_estimators=100,
-            max_depth=10,
-            random_state=42
-        )
-        self.scaler = StandardScaler()
-```
+Contributions are welcome. If you're adding a new constraint layer or changing a weight/buffer distance, update both the ML service's `utils/` code and `docs/ML_DOCUMENTATION.md` in the same change, the weights and buffers documented there are meant to always match what the code actually uses. If you're changing the API, keep the pattern of one controller/route pair per spatial layer rather than introducing a generic layer abstraction, that's a deliberate choice, see [Why It's Built This Way](#why-its-built-this-way).
 
-### 2.2 Feature Processing
+## Roadmap / To Be Done
 
-Data preprocessing includes:
-```python
-def prepare_training_data(self, features_dict):
-    # Normalize features
-    X_scaled = self.scaler.fit_transform(X)
-    
-    # Create target variable using weighted criteria
-    y = self.create_target_variable(X)
-```
+- **Persisted job history.** Runs currently exist only as files in the ML service's `output/` folder for the lifetime of that process; there's no record in the database of past runs, their parameters, or their results to compare against later.
+- **Configurable weights and buffers from the UI.** The AHP weights and buffer distances are currently constants in the ML service's Python code; exposing them as run-time parameters from the frontend would let a user test different assumptions without editing code.
+- **Automated retraining.** The suitability model is trained via a standalone script (`models/train_model.py`) and saved to disk; there's no pipeline to retrain it as new constraint data is added to the database.
 
-### 2.3 Model Training and Refinement
+## Disclaimer
 
-The training process includes hyperparameter optimization:
-```python
-param_grid = {
-    'n_estimators': [50, 100, 200],
-    'max_depth': [5, 10, 15],
-    'min_samples_split': [2, 5, 10]
-}
-
-grid_search = GridSearchCV(
-    self.model, param_grid, cv=5, scoring='r2', n_jobs=-1
-)
-```
-
-## 3. Clustering Analysis
-
-The system implements a sophisticated two-stage clustering approach for optimizing collection points:
-
-### 3.1 Initial K-means Clustering
-```python
-def perform_clustering_analysis(grid_gdf):
-    # Extract features from highly suitable areas
-    features = grid_gdf[grid_gdf['Suitability_Class'] == 'Highly Suitable']
-    X = np.array([[geom.centroid.x, geom.centroid.y] for geom in features.geometry])
-    scores = features['combined_score'].values.reshape(-1, 1)
-    
-    # Normalize and combine features
-    X_scaled = scaler.fit_transform(X)
-    scores_scaled = scaler.fit_transform(scores)
-    clustering_features = np.hstack([X_scaled, scores_scaled])
-    
-    # Perform K-means
-    n_clusters = min(5, len(features))
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    kmeans_labels = kmeans.fit_predict(clustering_features)
-```
-
-### 3.2 DBSCAN Refinement
-```python
-for k in range(n_clusters):
-    mask = kmeans_labels == k
-    cluster_points = X[mask]
-    
-    # Calculate adaptive parameters
-    distances = pdist(cluster_points)
-    eps = np.percentile(distances, 10) if len(distances) > 0 else 50
-    min_samples = max(3, int(np.sum(mask) * 0.1))
-    
-    # Apply DBSCAN
-    dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-    db_labels = dbscan.fit_predict(cluster_points)
-```
-
-## 4. Network Analysis
-
-The system performs advanced network analysis for route optimization:
-
-### 4.1 Network Construction
-```python
-def perform_network_analysis(nyeri_gdf, collection_points_gdf, landfill_sites_gdf):
-    # Download or fetch road network
-    G = ox.graph_from_bbox(
-        north=bounds[3], south=bounds[1],
-        east=bounds[2], west=bounds[0],
-        network_type='drive',
-        simplify=True
-    )
-```
-
-### 4.2 Route Optimization
-- Calculates optimal routes between collection points and landfills
-- Uses Dijkstra's algorithm for shortest paths
-- Considers road types and traffic patterns
-- Handles real-time updates
-
-### 4.3 Collection Point Analysis
-```python
-def create_markers_map(grid_gdf, aoi_gdf):
-    # Filter highly suitable areas
-    highly_suitable = grid_gdf[grid_gdf['Suitability_Class'] == 'Highly Suitable']
-    
-    # DBSCAN clustering for collection points
-    coords = np.array([[geom.centroid.x, geom.centroid.y] 
-                      for geom in highly_suitable.geometry])
-    
-    clustering = DBSCAN(
-        eps=50,  # 50 meters clustering distance
-        min_samples=1
-    ).fit(coords)
-```
-
-## 5. Database Integration
-
-The system uses PostgreSQL with PostGIS for spatial data storage:
-
-### 5.1 Collection Points Schema
-```python
-class CollectionPoint(Base):
-    __tablename__ = 'collection_points'
-    id = Column(Integer, primary_key=True)
-    point_id = Column(Integer, unique=True)
-    description = Column(String)
-    geom = Column(Geometry('POINT', srid=21037))
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
-```
-
-### 5.2 Route Storage
-- Stores optimized routes between points
-- Maintains spatial relationships
-- Handles real-time updates
-
-## 6. Output Generation
-
-The system generates several outputs:
-
-### 6.1 Suitability Maps
-- Continuous suitability scores
-- Classified suitability zones
-- Collection point locations
-
-### 6.2 Analysis Reports
-- Feature importance plots
-- Model performance metrics
-- Spatial distribution statistics
-
-### 6.3 Route Visualizations
-- Interactive web maps
-- Route statistics
-- Collection point clusters
-
-## 7. Performance Optimization
-
-The system includes several optimizations:
-- Batch processing for large datasets
-- Spatial indexing for efficient queries
-- Adaptive parameter selection
-- Real-time progress updates
-
-## Dependencies
-
-Required Python packages:
-- scikit-learn
-- numpy
-- pandas
-- geopandas
-- networkx
-- osmnx
-- rasterio
-- SQLAlchemy
-- GeoAlchemy2
-- eventlet
+This is academic research code built for a final-year project around a specific study area (Nyeri, Kenya), not an audited or continuously maintained product. Suitability results are only as accurate and current as the GIS layers (rivers, roads, settlements, soil, protected areas, land use) loaded into the database for whatever area you point it at, and the trained model reflects the weighting assumptions documented in [docs/ML_DOCUMENTATION.md](docs/ML_DOCUMENTATION.md), not an independently validated standard. Treat every output as a decision-support input for further human review, not a final siting decision.
